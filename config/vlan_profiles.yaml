@@ -1,0 +1,78 @@
+# VLAN Profiles + User Profiles (/vlan-profiles, /user-profiles — both
+# CONFIRMED LIVE as real, readable endpoints against a real tenant on
+# 2026-08-15; only GET was exercised, POST shape below is not confirmed).
+#
+# This file exists because of a real correction: VLAN assignment for an
+# SSID does NOT live on the SSID object itself — there is no vlan/tag
+# field on it anywhere. Read directly off a live SSID and its reference
+# chain, the real path is:
+#
+#   SSID.default_user_profile (an id) -> User Profile -> vlan_profile ->
+#   vlan_profile.default_vlan_id (the actual VLAN number)
+#
+# This replaces this repo's original "just name a VLAN inline on the SSID"
+# design entirely (both the very first Mist-mirroring draft, and network
+# equivalents) — there's no standalone named-VLAN object to reference by
+# name from an SSID. You create/reuse a VLAN Profile + User Profile pair
+# and point the SSID's default_user_profile at the User Profile's id.
+#
+# UNCONFIRMED: the exact POST body shape for creating either object. GET
+# on an existing user_profile returns vlan_profile as a fully nested
+# object — inconsistent with how an SSID references its own user profile
+# (a bare integer id, confirmed live: "default_user_profile": 36000).
+# Whether POST /user-profiles wants a nested vlan_profile object, a
+# vlan_profile_id field, or something else entirely was NOT tested — do
+# the create -> GET -> delete round-trip on ONE of these (HANDOFF Section
+# 2.2) before trusting push.py's resolution of this file at scale.
+#
+# This tenant already has 11 vlan-profiles / 4 user-profiles predefined by
+# Extreme (id 40000 = VLAN 1 "default", id 36000 = "default-profile") —
+# upsert-by-name leaves those alone; only the BB-VP-*/BB-UP-* entries below
+# are ours.
+
+vlan_profiles:
+  - name: BB-VP-DC-Ops
+    default_vlan_id: 20
+  - name: BB-VP-DC-IoT
+    default_vlan_id: 25
+  - name: BB-VP-Corp-Staff
+    default_vlan_id: 10
+  - name: BB-VP-Corp-Guest
+    default_vlan_id: 15
+  - name: BB-VP-Corp-IoT
+    default_vlan_id: 18
+  - name: BB-VP-Retail-Staff
+    default_vlan_id: 32
+  - name: BB-VP-Retail-Guest
+    default_vlan_id: 35
+  - name: BB-VP-Retail-POS
+    default_vlan_id: 30
+  - name: BB-VP-PopUp-Staff
+    default_vlan_id: 40
+  - name: BB-VP-PopUp-Guest
+    default_vlan_id: 45
+
+# One User Profile per VLAN Profile, 1:1 — nothing in this lab needs
+# per-attribute/RADIUS-returned user-profile logic (a real feature, out of
+# scope here).
+user_profiles:
+  - name: BB-UP-DC-Ops
+    vlan_profile: BB-VP-DC-Ops
+  - name: BB-UP-DC-IoT
+    vlan_profile: BB-VP-DC-IoT
+  - name: BB-UP-Corp-Staff
+    vlan_profile: BB-VP-Corp-Staff
+  - name: BB-UP-Corp-Guest
+    vlan_profile: BB-VP-Corp-Guest
+  - name: BB-UP-Corp-IoT
+    vlan_profile: BB-VP-Corp-IoT
+  - name: BB-UP-Retail-Staff
+    vlan_profile: BB-VP-Retail-Staff
+  - name: BB-UP-Retail-Guest
+    vlan_profile: BB-VP-Retail-Guest
+  - name: BB-UP-Retail-POS
+    vlan_profile: BB-VP-Retail-POS
+  - name: BB-UP-PopUp-Staff
+    vlan_profile: BB-VP-PopUp-Staff
+  - name: BB-UP-PopUp-Guest
+    vlan_profile: BB-VP-PopUp-Guest

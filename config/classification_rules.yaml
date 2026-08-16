@@ -1,0 +1,48 @@
+# Classification Rules (/classification-rules — confirmed real, working
+# endpoint, POST tested live 2026-08-16). Each rule below matches devices
+# belonging to one Site Group.
+#
+# CHANGED 2026-08-16, at the user's direction: switched from Cloud Config
+# Group to Site Group as the classification basis. Better fit for two
+# real reasons, not just preference: (1) Site Groups already exist as
+# real objects — CCGs, by contrast, cannot be created at all without a
+# real, already-claimed device (see cloud_config_groups.yaml), a
+# dependency this fictional lab can't satisfy. (2) `CLASSIFICATION_TYPE_LOCATION`
+# is independently confirmed real — this tenant's own pre-existing rules
+# ("AllOffices", "Ballinger-Location") already use it, and "AllOffices"
+# specifically references `classification_type_id` = the real id of
+# "CompuNet" (this tenant's own root location) — the exact same pattern
+# used here with our BB- site groups' ids.
+#
+# Real confirmed request shape — the field-name mismatch between write and
+# read sides (found via two live validation errors while this was still
+# CCG-based) applies identically here:
+#
+#   classifications: [{
+#     classification_type: "CLASSIFICATION_TYPE_LOCATION",
+#     match: true,
+#     classification_type_id: <the site group's real id>,
+#     value: "<site group name, for display — matches what existing tenant rules do>"
+#   }]
+#
+# UNCONFIRMED: whether this is the SAME mechanism that populates the
+# "Classification Rules" column on a Network Policy's Wireless Networks
+# table in the real UI, or a separate/parallel one. The real
+# `/user-profile-assignments` endpoint (POST, confirmed creatable) takes
+# `folder_ids` — a list of location folder ids, which a Site Group's id
+# satisfies directly — and attaches to an SSID via
+# `POST /ssids/{id}/user-profile-assignment/:attach`. That may be the
+# more literal path to what shows in that UI column; not built yet this
+# session. This file's rules are real, independent objects either way.
+
+classification_rules:
+  - name: BB-Rule-DistributionCenter
+    site_group: BB-SG-DistributionCenters
+  - name: BB-Rule-CorporateOffice
+    site_group: BB-SG-CorporateOffices
+  - name: BB-Rule-Retail
+    site_group: BB-SG-RetailStandalone
+  - name: BB-Rule-RetailMall
+    site_group: BB-SG-RetailMall
+  - name: BB-Rule-PopUp
+    site_group: BB-SG-PopUpStores

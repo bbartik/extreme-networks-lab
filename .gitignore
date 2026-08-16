@@ -1,0 +1,8 @@
+.env
+config/secrets.yaml
+state/created_objects.json
+__pycache__/
+*.pyc
+.claude
+.docs
+HANDOFF-extreme-platform-one.md

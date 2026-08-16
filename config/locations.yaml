@@ -1,0 +1,150 @@
+# Locations — equivalent of Mist's site_groups.yaml + sites.yaml combined
+# into one file, because Platform ONE's Global View location tree (Site
+# Group > Site > Building > Floor) already IS the grouping mechanism,
+# rather than Mist's flat sites + separate sitegroup_ids tagging.
+#
+# CONFIRMED LIVE (2026-08-15) against a real tenant: Site Group IS a real,
+# distinct object type in the tree (seen live: "type": "Site_Group") and
+# it nests arbitrarily (this tenant's own real tree is two Site_Groups
+# deep before the first Site). The tree really is Site Group > Site >
+# Building > Floor, and GET /locations/tree works and returns it.
+#
+# CONFIRMED LIVE by actually writing (2026-08-15, second pass): all
+# location CRUD — Site Group, Site, Building, Floor alike — goes through
+# ONE generic pair of paths: POST /locations to create (a `type` field
+# disambiguates which kind), PUT /locations/{id} to update. The
+# type-named paths (/locations/sites, /locations/site-groups, etc.) reject
+# GET outright, and even though their own OPTIONS response claims to allow
+# PUT/DELETE, a live PUT against /locations/site-groups/{id} 404's — not a
+# real route, just a misleading Allow header. Listing existing objects for
+# upsert-by-name matching goes through /locations/tree instead (filter
+# nodes by type) — see p1_client.py.
+#
+# Also confirmed: POST /locations requires a real parent_id (NotNull) —
+# there's no way to create a true new root. This tenant already has one
+# real root Site_Group of its own; push.py attaches every BB- site group
+# as a new sibling under that existing root rather than trying to create
+# one. site_group below is used both for this repo's own bookkeeping
+# (site_defaults, which device template/policy a site ends up on) AND now
+# genuinely sent as each site's real parent_id.
+#
+# Devices attach at the Site level in this lab. Building/Floor levels exist
+# in the real tree but aren't exercised here — same scoping decision the
+# Mist lab made by skipping AP claiming.
+
+site_groups:
+  - name: BB-SG-DistributionCenters
+  - name: BB-SG-CorporateOffices
+  - name: BB-SG-RetailStandalone
+  - name: BB-SG-RetailMall
+  - name: BB-SG-PopUpStores
+
+# site_defaults: per-group fallback values, same convenience pattern as the
+# Mist repo — a site only states what's actually specific to it.
+#
+# network_policy is the same BB-NP-Wireless everywhere now — collapsed to
+# one org-wide policy on 2026-08-15 (see network_policies.yaml header for
+# why). Only device_template_ap (and, through it, the radio profile) still
+# varies per format — that's still real, unaffected by the policy collapse.
+site_defaults:
+  BB-SG-DistributionCenters:
+    country_code: US
+    device_template_ap: BB-DT-DistributionCenter-AP
+    network_policy: BB-NP-Wireless
+  BB-SG-CorporateOffices:
+    country_code: US
+    device_template_ap: BB-DT-CorporateOffice-AP
+    network_policy: BB-NP-Wireless
+  BB-SG-RetailStandalone:
+    country_code: US
+    device_template_ap: BB-DT-RetailStandalone-AP
+    network_policy: BB-NP-Wireless
+  BB-SG-RetailMall:
+    country_code: US
+    device_template_ap: BB-DT-RetailMall-AP
+    network_policy: BB-NP-Wireless
+  BB-SG-PopUpStores:
+    country_code: US
+    device_template_ap: BB-DT-PopUp-AP
+    network_policy: BB-NP-Wireless
+
+sites:
+
+  - name: BB-DC-Dallas-01
+    site_group: BB-SG-DistributionCenters
+    address: "Dallas, TX, USA"
+    timezone: America/Chicago
+    notes: "BB retail lab - Distribution Center - safe to delete"
+
+  - name: BB-DC-Reno-02
+    site_group: BB-SG-DistributionCenters
+    address: "Reno, NV, USA"
+    timezone: America/Los_Angeles
+    notes: "BB retail lab - Distribution Center (western regional DC) - safe to delete"
+
+  - name: BB-Corp-Austin-HQ
+    site_group: BB-SG-CorporateOffices
+    address: "Austin, TX, USA"
+    timezone: America/Chicago
+    notes: "BB retail lab - Corporate HQ - safe to delete"
+
+  - name: BB-Corp-Chicago-Regional
+    site_group: BB-SG-CorporateOffices
+    address: "Chicago, IL, USA"
+    timezone: America/Chicago
+    notes: "BB retail lab - Regional office - safe to delete"
+
+  - name: BB-Retail-Denver-0142
+    site_group: BB-SG-RetailStandalone
+    address: "Denver, CO, USA"
+    timezone: America/Denver
+    notes: "BB retail lab - Standalone store #0142 - safe to delete"
+    vars:
+      store_number: "0142"
+      # pos_psk lives in config/secrets.yaml (gitignored), keyed by this site name
+
+  - name: BB-Retail-Columbus-0210
+    site_group: BB-SG-RetailStandalone
+    address: "Columbus, OH, USA"
+    timezone: America/New_York
+    notes: "BB retail lab - Standalone store #0210 - safe to delete"
+    vars:
+      store_number: "0210"
+
+  - name: BB-Retail-Mall-Scottsdale-0087
+    site_group: BB-SG-RetailMall
+    address: "Scottsdale Fashion Square, Scottsdale, AZ, USA"
+    timezone: America/Phoenix
+    notes: "BB retail lab - Mall-colocated store #0087 - safe to delete"
+    vars:
+      store_number: "0087"
+
+  - name: BB-Retail-Mall-KingOfPrussia-0311
+    site_group: BB-SG-RetailMall
+    address: "King of Prussia Mall, King of Prussia, PA, USA"
+    timezone: America/New_York
+    notes: "BB retail lab - Mall-colocated store #0311 - safe to delete"
+    vars:
+      store_number: "0311"
+
+  - name: BB-PopUp-NYC-Holiday-01
+    site_group: BB-SG-PopUpStores
+    address: "Manhattan, NY, USA"
+    timezone: America/New_York
+    notes: "BB retail lab - Holiday season pop-up - safe to delete"
+
+  - name: BB-PopUp-Austin-SXSW-02
+    site_group: BB-SG-PopUpStores
+    address: "Austin, TX, USA"
+    timezone: America/Chicago
+    notes: "BB retail lab - SXSW event pop-up - safe to delete"
+
+  # --- Example of adding a new store: just this block, then `python scripts/push.py` ---
+  # - name: BB-Retail-Phoenix-0455
+  #   site_group: BB-SG-RetailStandalone
+  #   address: "Phoenix, AZ, USA"
+  #   timezone: America/Phoenix
+  #   notes: "New store example"
+  #   vars:
+  #     store_number: "0455"
+  #   # pos_psk for this site goes in config/secrets.yaml, not here

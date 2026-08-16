@@ -1,0 +1,100 @@
+# Radio Profiles (/radio-profiles — CONFIRMED LIVE: list+read tested
+# against a real tenant on 2026-08-15). CORRECTED from this repo's first
+# draft: a radio profile is a SINGLE-BAND object (confirmed field
+# radio_mode, seen live as "A" on a real Extreme-predefined 11a profile),
+# not one profile holding both 2.4/5GHz settings the way the first draft
+# (and Mist's RF Template) modeled it. Each site format below needs TWO
+# radio profiles — one per band actually used — not one.
+#
+# Real confirmed fields (read live off radio-profiles[].data): name,
+# description, radio_mode, transmission_power, max_transmit_power,
+# transmission_power_floor, transmission_power_max_drop, max_clients,
+# enable_client_transmission_power, client_transmission_power,
+# enable_ofdma. Several more fields are themselves *_id references to
+# other sub-objects (neighborhood_analysis_id, channel_selection_id,
+# radio_usage_optimization_id, miscellaneous_settings_id) not explored
+# this session — a real create likely needs at least sane defaults for
+# these; unconfirmed whether they're optional on POST.
+#
+# radio_mode is a real server-side enum, XiqRadioMode — a live 400 from
+# POST /radio-profiles on 2026-08-15 (rejecting a guessed "B") handed back
+# the complete accepted value list: A_N, A, AC, BE_5_GHZ, BE_6_GHZ,
+# BE_2_4_GHZ, G_N, AX_5_GHZ, AX_6_GHZ, AX_2_4_GHZ, B_G. "A" (5GHz, legacy
+# 802.11a) was already confirmed live via GET; "B_G" (2.4GHz, legacy
+# 802.11b/g) is used below as the matching legacy tier — confirmed
+# accepted by POST, not independently verified to behave correctly on a
+# real radio.
+#
+# The first draft's channel-width / min-max-dBm-range fields don't exist
+# on the real object — channel selection apparently lives under
+# channel_selection_id's referenced object instead, not modeled here.
+# transmission_power / max_transmit_power values below carry over the
+# first draft's *intent* (site-format power ceiling), not a verified
+# real per-AP-model dBm range.
+#
+# How a radio profile actually gets bound to a specific AP's specific
+# radio — and therefore how "2.4GHz off" for corporate/mall actually gets
+# enforced — is part of the still-unconfirmed device-template layer (see
+# device_templates.yaml). Simply not creating a 2.4 profile for those two
+# formats is this repo's placeholder for that intent, not a confirmed
+# mechanism.
+
+radio_profiles:
+
+  - name: BB-RP-DistributionCenter-24
+    comment: Legacy handheld scanners need 2.4GHz kept on. High power ceiling for long warehouse throw.
+    radio_mode: "B_G"
+    max_transmit_power: 20
+    max_clients: 100
+
+  - name: BB-RP-DistributionCenter-5
+    comment: >
+      High power ceiling, sparse AP density, long throw between racking
+      aisles. 23 was the first draft's intent; confirmed live 2026-08-15
+      that maxTransmitPower is capped at 20 (a real server-side Max
+      validation, not a guess) — capped to the ceiling instead.
+    radio_mode: "A"
+    max_transmit_power: 20
+    max_clients: 100
+
+  - name: BB-RP-CorporateOffice-5
+    comment: >
+      2.4GHz intentionally has no profile here — dense AP office floor,
+      offload to 5GHz only (see header note on how "band off" isn't fully
+      confirmed as a mechanism). Lower power ceiling for channel reuse.
+    radio_mode: "A"
+    max_transmit_power: 14
+    max_clients: 200
+
+  - name: BB-RP-RetailStandalone-24
+    comment: Baseline power, no neighboring-tenant contention.
+    radio_mode: "B_G"
+    max_transmit_power: 17
+    max_clients: 100
+
+  - name: BB-RP-RetailStandalone-5
+    comment: Baseline power, no neighboring-tenant contention.
+    radio_mode: "A"
+    max_transmit_power: 17
+    max_clients: 100
+
+  - name: BB-RP-RetailMall-5
+    comment: >
+      2.4GHz intentionally has no profile — mall band is usually
+      saturated. Deliberately LOW power ceiling so the cell doesn't bleed
+      into neighboring tenants' spaces.
+    radio_mode: "A"
+    max_transmit_power: 11
+    max_clients: 100
+
+  - name: BB-RP-PopUp-24
+    comment: Never gets a real RF survey — conservative defaults.
+    radio_mode: "B_G"
+    max_transmit_power: 17
+    max_clients: 60
+
+  - name: BB-RP-PopUp-5
+    comment: Never gets a real RF survey — conservative defaults.
+    radio_mode: "A"
+    max_transmit_power: 17
+    max_clients: 60

@@ -1,0 +1,198 @@
+# Device Templates — AP templates and Switch templates.
+#
+# AP TEMPLATES: CONFIRMED REAL AND WORKING as of 2026-08-16, found the same
+# way as SSID creation and classification-rule attachment — a request the
+# user captured in their own browser devtools while creating one in the
+# real Platform ONE UI (saved in full at .docs/ap-template.json, gitignored).
+#
+# Real endpoint: POST /config/device/templates on the v0 "classic XIQ" host
+# (cloudapi.extremecloudiq.com/xiq/v0), with an EXTRA query param beyond
+# the usual ownerId/ownerIds: vocoLevel=10 (meaning unconfirmed, present in
+# the real captured request, carried through as-is).
+#
+# Real structural facts, confirmed from the captured body — genuinely
+# different from Mist and from this file's original (pre-verification)
+# guess:
+#
+# 1. A device template is PER AP MODEL (productType, e.g. "AP_5010") —
+#    at the user's direction, every template below assumes AP5010 hardware.
+#    One template per (model x RF-profile intent) combination is still the
+#    right shape (see item 2 below), just renamed AP-5010-<format> to
+#    reflect the model explicitly.
+#
+# 2. A "radio profile" as embedded in a device template is a MUCH richer,
+#    self-contained object than this repo's config/radio_profiles.yaml
+#    (which targets the separate, documented v1 /radio-profiles endpoint)
+#    — it carries neighborhoodAnalysis, channelSelection,
+#    radioUsageOptimization, miscellaneousSettings, and
+#    presenceServerSettings sub-objects, ~150 fields deep. These are two
+#    DIFFERENT real concepts that happen to share a name — this repo's
+#    v1 BB-RP-* radio profiles are NOT referenced by AP templates; RF
+#    customization for a template happens by editing a copy of the real
+#    captured predefined radio profile object directly (see
+#    push.py:create_ap_template_v0). Confirmed live: this tenant's
+#    existing templates use Extreme's own predefined profiles
+#    (radio_ng_11ax-2g/5g/6g, ids 30007/30008/30009) as the base.
+#
+# 3. Each band's radio profile appears TWICE in the create body,
+#    byte-identical: once as a top-level radioProfile24g/radioProfile5g/
+#    radioProfileWifi2, and again nested inside
+#    interfaceSettings.wirelessInterfaceSettings.entries[] (wifi0=2.4GHz,
+#    wifi1=5GHz, wifi2=6GHz). Both copies must be kept in sync.
+#
+# 4. "Band off" (needed for CorporateOffice/RetailMall, matching the
+#    original 2.4GHz-disabled intent) is NOT done by omitting the radio
+#    profile or the interface entry — confirmed live via a real diff the
+#    user captured (.docs/ap-template-24off.json vs .docs/ap-template.json):
+#    the ONLY difference is `disableAllSsids: true` on that band's entry
+#    in interfaceSettings.wirelessInterfaceSettings.entries[]. The radio
+#    profile stays referenced normally.
+#
+# max_transmit_power below is expressed per band and applied to BOTH
+# copies of that band's radio profile object at push time. 20 is the
+# observed ceiling on the real predefined profiles (also matches the
+# confirmed v1 /radio-profiles cap found earlier this session) — DC and
+# Retail sit at or near it, CorporateOffice/RetailMall stay low per the
+# original mall/office RF intent.
+#
+# ATTACHING to the Network Policy: confirmed real and WORKING as of
+# 2026-08-16 (all 5 templates live, verified via a fresh GET after push,
+# not just trusting the write response). Found from a request the user
+# captured while using the policy's "AP Template" tab
+# (.docs/ap-add-with-rule.json — the first template added with no rule
+# becomes the policy's fallback "default", observed live; every
+# subsequent one needs a classification_rule, same Site-Group rules
+# already built in classification_rules.yaml).
+#
+# Worth recording how close this came to being wrongly written off as a
+# product bug: several real attempts (varying method/URL/payload) all had
+# the server silently drop `classifiedEntries`, and reproducing the save
+# through the actual UI got a real 404 too, with the UI showing the
+# change anyway until a hard refresh reverted it. That looked exactly
+# like a confirmed vendor bug. It wasn't — the fix was one missing field,
+# `enableClassification: true`, absent from every attempt including the
+# UI's own. HANDOFF Section 2.4's lesson ("an API accepting a payload
+# isn't proof it worked") cuts both ways: it's just as easy to wrongly
+# conclude something is broken from a failure that LOOKS definitive.
+#
+# Real endpoint — POST, not PUT (PUT 400's "not supported" at both the
+# policy-scoped and item-level paths, tried both):
+#
+#   POST https://cloudapi.extremecloudiq.com/xiq/v0/config/device/templateprofiles/networkpolicy/{policyId}
+#        ?vocoLevel=12&deviceFunction=Ap&vocoLevel=5&page.size=1000&productType=<every AP model>&ownerId=X&ownerIds=X
+#
+# Body: {ownerId, jsonType: "device-template-profile", productType,
+# deviceFunction, enableClassification: true, classifiedEntries:
+# [{ownerId, classAsgn: <full classification-assignment, same shape as the
+# SSID case>, deviceTemplate: <full device-template, same rich shape as
+# creation>}], defaultDeviceTemplate: <the no-match fallback>}. POST does
+# NOT update in place — confirmed live it always returns a new profile
+# id, but the backend keeps exactly one per (policy, productType), so
+# re-running is still safe; the old id is simply gone afterward (its own
+# DELETE 400's — nothing left to delete, not an error). Each template
+# below maps 1:1 to a rule (unlike SSIDs, nothing here is shared across
+# formats) — see attach_ap_templates_v0() in push.py.
+
+device_templates:
+
+  ap_templates:
+    - name: AP-5010-DistributionCenter
+      comment: >
+        All three bands on — 2.4GHz kept alive for legacy handheld
+        scanners. High power ceiling for open warehouse floors.
+      product_type: AP_5010
+      bands_disabled: []
+      max_transmit_power: { "24": 20, "5": 20, "6": 20 }
+      classification_rule: BB-Rule-DistributionCenter
+
+    - name: AP-5010-CorporateOffice
+      comment: >
+        2.4GHz off (confirmed real mechanism: disableAllSsids on the wifi0
+        interface entry, not a profile change) — dense AP office floor,
+        offload to 5/6GHz only. Lower power ceiling for channel reuse.
+      product_type: AP_5010
+      bands_disabled: ["24"]
+      max_transmit_power: { "5": 14, "6": 14 }
+      classification_rule: BB-Rule-CorporateOffice
+
+    - name: AP-5010-Retail
+      comment: Baseline power, all bands on — no neighboring-tenant contention.
+      product_type: AP_5010
+      bands_disabled: []
+      max_transmit_power: { "24": 17, "5": 17, "6": 17 }
+      classification_rule: BB-Rule-Retail
+
+    - name: AP-5010-RetailMall
+      comment: >
+        2.4GHz off, deliberately LOW power ceiling so the cell doesn't
+        bleed into neighboring tenants' spaces.
+      product_type: AP_5010
+      bands_disabled: ["24"]
+      max_transmit_power: { "5": 11, "6": 11 }
+      classification_rule: BB-Rule-RetailMall
+
+    - name: AP-5010-PopUp
+      comment: Never gets a real RF survey — conservative defaults, all bands on.
+      product_type: AP_5010
+      bands_disabled: []
+      max_transmit_power: { "24": 17, "5": 17, "6": 17 }
+      classification_rule: BB-Rule-PopUp
+
+  # SWITCH TEMPLATES: still fully speculative — no endpoint found or
+  # captured this session (unlike AP templates above). Content unchanged
+  # from the original pre-verification draft; don't trust the field names,
+  # only the port-role reasoning. Real next step is identical to how AP
+  # templates got solved: capture a real browser request while creating
+  # one in the actual UI.
+  switch_templates:
+    - name: BB-DT-Retail-Switch
+      comment: >
+        Single Virtual Chassis-equivalent stack (1-3 switches), flat port
+        map, no core/IDF split.
+      port_usages:
+        pos:    { mode: access, native_vlan: wired_pos,   ports: "1-4" }
+        staff:  { mode: access, native_vlan: wired_staff, ports: "5-8" }
+        iot:    { mode: access, native_vlan: wired_iot,   ports: "9-10" }
+        ap:
+          mode: trunk
+          native_vlan: wired_mgmt
+          tagged_vlans: [wifi_retail_pos, wifi_retail_staff, wifi_retail_guest]
+          ports: "11-22"
+        uplink: { mode: trunk, all_vlans: true, ports: "23-24" }
+
+    - name: BB-DT-DistributionCenter-Switch-Core
+      comment: "Core-of-2 pair (EVPN-Multihoming-equivalent). Assign to a site's core switches."
+      port_usages:
+        core_peer:     { mode: trunk, all_vlans: true, ports: "1" }
+        core_downlink: { mode: trunk, all_vlans: true, ports: "2-3" }
+
+    - name: BB-DT-DistributionCenter-Switch-IDF
+      comment: "Access closet, dual-homed uplinks to both core members."
+      port_usages:
+        idf_uplink: { mode: trunk, all_vlans: true, ports: "1-2" }
+        ops:        { mode: access, native_vlan: wired_ops, ports: "3-10" }
+        iot:        { mode: access, native_vlan: wired_iot, ports: "11-14" }
+        ap:
+          mode: trunk
+          native_vlan: wired_mgmt
+          tagged_vlans: [wifi_dc_ops, wifi_dc_iot]
+          ports: "15-22"
+
+    - name: BB-DT-CorporateOffice-Switch-Core
+      comment: "Same Core-of-2 shape as the DC template, office VLANs."
+      port_usages:
+        core_peer:     { mode: trunk, all_vlans: true, ports: "1" }
+        core_downlink: { mode: trunk, all_vlans: true, ports: "2-3" }
+
+    - name: BB-DT-CorporateOffice-Switch-IDF
+      comment: "Access closet, dual-homed uplinks to both core members."
+      port_usages:
+        idf_uplink: { mode: trunk, all_vlans: true, ports: "1-2" }
+        staff:      { mode: access, native_vlan: wired_staff, ports: "3-14" }
+        guest:      { mode: access, native_vlan: wired_guest, ports: "15-18" }
+        iot:        { mode: access, native_vlan: wired_iot, ports: "19-20" }
+        ap:
+          mode: trunk
+          native_vlan: wired_mgmt
+          tagged_vlans: [wifi_corp_staff, wifi_corp_guest, wifi_corp_iot]
+          ports: "21-24"

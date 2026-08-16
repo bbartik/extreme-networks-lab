@@ -1,0 +1,190 @@
+# Network Policy (/network-policies — corrected path; this repo's first
+# draft guessed /policies, which 404s) + its SSIDs.
+#
+# Collapsed to ONE policy on 2026-08-15, at the user's suggestion after
+# re-reading Platform ONE's own docs: a policy applies to "multiple APs,
+# switches, and routers that share a common characteristic" and "you might
+# only need one unified policy for all your devices." The first draft had
+# split by site format (DistributionCenter/CorporateOffice/PopUp) plus a
+# separate Policy object PER RETAIL SITE — that per-site explosion existed
+# only as a workaround for not having a confirmed per-site credential
+# mechanism. Now that PPSK is confirmed real and already active in this
+# tenant (read directly off a live "Corp" SSID: security_type: PPSK,
+# key_value: "" — the actual per-identity keys live in a separate object
+# this session never found, not on the SSID itself), BB-Retail-POS is
+# modeled as ONE PPSK SSID instead of N literal-PSK SSIDs across N
+# per-site policies. Real per-store credential provisioning still isn't
+# built (that separate PPSK-identity object type wasn't explored) — but
+# the policy/SSID shape no longer needs to work around its absence.
+#
+# What differentiates sites is unchanged by this collapse: radio profiles
+# and device templates still vary per site format (see radio_profiles.yaml
+# / device_templates.yaml), and VLAN still varies per SSID via
+# user_profile (see vlan_profiles.yaml). Consolidating the POLICY doesn't
+# collapse those — it only removes the redundant per-site policy
+# container. One real open question this raises and doesn't resolve: with
+# every SSID in one shared policy, does every AP that gets this policy
+# assigned broadcast ALL of them (DC-Ops in a corporate office, PopUp-Guest
+# in a permanent store)? Real per-site SSID/band scoping — if it exists —
+# is part of the same still-unlocated device-template/AP-config layer as
+# everything in device_templates.yaml. Acceptable for this lab; would need
+# resolving before treating this as production-ready.
+#
+# A Network Policy is a thin shell object: {name, description, type}.
+# Confirmed real `type` values seen live: NETWORK_ACCESS_AND_SWITCHING,
+# WIRELESS_ACCESS. SSIDs are NOT embedded fields on it, in spite of how
+# tempting that looked from docs prose — confirmed live: PUT
+# /network-policies/{id} with an embedded `ssids` array returns 200 but
+# silently does nothing (GET .../ssids afterward still shows zero). SSIDs
+# are top-level objects, associated afterward.
+#
+# SSID CREATION HAS NO API ENDPOINT AT ALL — confirmed definitively on
+# 2026-08-16 by searching the tenant's own real OpenAPI spec
+# (.docs/api-1.json, "ExtremeCloud IQ API" v25.11.1-3, provided by the
+# user), both by URL text and by cross-referencing every schema that
+# touches an SSID type. Every SSID-related endpoint operates on an id
+# that must already exist (rename, set mode, set PSK, attach user
+# profile, attach to policy, per-device override) — there is no
+# POST-a-new-SSID operation anywhere. A bare SSID object can only be
+# created once, by hand, in the Platform ONE web UI, with a name exactly
+# matching the entries below. push.py then looks it up by name and fully
+# configures it via the real endpoints found in that spec:
+#   PUT  /ssids/{id}/mode/open                — no body
+#   PUT  /ssids/{id}/mode/psk                  — key_management/encryption_method/key_type/key_value(/sae_group)
+#   POST /ssids/{id}/user-profile/:attach      — bare user_profile id (VLAN)
+#   POST /network-policies/{id}/ssids/:add     — array of ssid ids, attaches to the policy
+# PPSK and DOT1X modes need additional real-but-unexplored object types
+# (user_group_ids, radius_server_group_id) — see the BB-Retail-POS and
+# BB-Corp-Staff comments below — and are skipped by push.py rather than
+# guessed at.
+#
+# Real SSID auth schema, read directly off live SSIDs in this tenant:
+#   access_security: {
+#     security_type: "OPEN" | "PSK" | "PPSK",   # DOT1X value unconfirmed — no live example existed to check
+#     key_type: "ASCII",                          # present for PSK, absent entirely for PPSK
+#     key_value: "<passphrase>" | "",              # empty for OPEN and PPSK alike
+#     key_management: "WPA3_PSK" | "WPA2_PSK",
+#     encryption_method: "CCMP",
+#   }
+#   default_user_profile: <id>   # -> resolves to a VLAN via vlan_profiles.yaml, see that file
+#
+# classification_rules: [<name>, ...] — real, working, confirmed live
+# 2026-08-16 from a request the user captured in their own browser
+# devtools while attaching a rule through the actual UI. Real mechanism:
+# PUT https://cloudapi.extremecloudiq.com/xiq/v0/config/ssid/ssidprofiles/networkpolicy/{policyId}/summary
+# with a body carrying the SSID's summary fields (id/name/accessSecurityType/vlan)
+# plus `classifiedEntries`, each entry wrapping the FULL nested
+# classification-rule object (not just its id — a bare-id reference was
+# rejected with a generic "input is not valid", same pattern as SSID
+# creation needing the full nested defaultUserProfile). See
+# attach_classification_rules_v0() in push.py. Each name here must match a
+# `name:` in classification_rules.yaml.
+
+network_policies:
+
+  - name: BB-NP-Wireless
+    type: WIRELESS_ACCESS
+    comment: >
+      One policy for the whole org (see header) — every SSID below,
+      meant to be assigned to every AP once device-assignment and SSID
+      creation are both actually working.
+    ssids:
+      - name: BB-DC-Ops
+        comment: >
+          Handheld scanners (Zebra/Honeywell) and forklift terminals.
+          WPA2-only — a lot of this hardware still doesn't support WPA3.
+        user_profile: BB-UP-DC-Ops
+        access_security:
+          security_type: PSK
+          key_management: WPA2_PSK
+          key_value: "!secret"
+        classification_rules: [BB-Rule-DistributionCenter]
+      - name: BB-DC-IoT
+        comment: Fixed cameras, RFID readers, dock-door sensors, forklift telemetry.
+        user_profile: BB-UP-DC-IoT
+        access_security:
+          security_type: PSK
+          key_management: WPA3_PSK
+          key_value: "!secret"
+        classification_rules: [BB-Rule-DistributionCenter]
+
+      - name: BB-Corp-Staff
+        comment: >
+          dot1x against corporate IdP/RADIUS. security_type is
+          UNCONFIRMED — no live dot1x SSID existed in this tenant to
+          check the real enum value against; "DOT1X" is a best-effort
+          placeholder. radius_client_profile also needs a real RADIUS
+          client object (its own object type, not modeled/created here).
+        user_profile: BB-UP-Corp-Staff
+        access_security:
+          security_type: DOT1X   # UNCONFIRMED, see comment above
+        radius_client_profile:
+          default_radius_client_object_id: null   # needs a real RADIUS client object, not modeled — see README
+        classification_rules: [BB-Rule-CorporateOffice]
+      - name: BB-Corp-Guest
+        comment: >
+          Email-capture captive portal. OPEN security_type is confirmed
+          real; the portal/captive-auth field shape is NOT modeled or
+          confirmed here.
+        user_profile: BB-UP-Corp-Guest
+        access_security:
+          security_type: OPEN
+        classification_rules: [BB-Rule-CorporateOffice]
+      - name: BB-Corp-IoT
+        comment: Printers, AV/conf-room gear, badge readers.
+        user_profile: BB-UP-Corp-IoT
+        access_security:
+          security_type: PSK
+          key_management: WPA3_PSK
+          key_value: "!secret"
+        classification_rules: [BB-Rule-CorporateOffice]
+
+      - name: BB-Retail-Staff
+        comment: dot1x for store associates — same UNCONFIRMED security_type placeholder as corporate staff.
+        user_profile: BB-UP-Retail-Staff
+        access_security:
+          security_type: DOT1X   # UNCONFIRMED, see BB-Corp-Staff note
+        classification_rules: [BB-Rule-Retail, BB-Rule-RetailMall]
+      - name: BB-Retail-Guest
+        comment: Email-capture portal — portal shape unconfirmed, OPEN security_type is confirmed real.
+        user_profile: BB-UP-Retail-Guest
+        access_security:
+          security_type: OPEN
+        classification_rules: [BB-Rule-Retail, BB-Rule-RetailMall]
+      - name: BB-Retail-POS
+        comment: >
+          Payment terminals, hidden SSID, isolated VLAN. Real PPSK —
+          confirmed live, see header — instead of a per-site literal PSK:
+          one SSID object, distinct per-store credentials meant to come
+          from real per-identity PPSK provisioning. key_value is
+          deliberately empty, matching the real PPSK SSID read live in
+          this tenant. CONFIRMED from the real OpenAPI spec
+          (XiqSetSsidModePpskRequest): setting PPSK mode requires a
+          non-empty user_group_ids array — a "User Group" object,
+          distinct from both User Profile (vlan_profiles.yaml) and Cloud
+          Config Group (cloud_config_groups.yaml), whose own endpoint
+          wasn't explored this session. push.py skips PPSK configuration
+          with a clear message rather than guess at that field.
+        user_profile: BB-UP-Retail-POS
+        hidden: true
+        access_security:
+          security_type: PPSK
+          key_management: WPA2_PSK
+          key_value: ""
+        classification_rules: [BB-Rule-Retail, BB-Rule-RetailMall]
+
+      - name: BB-PopUp-Staff
+        user_profile: BB-UP-PopUp-Staff
+        access_security:
+          security_type: PSK
+          key_management: WPA3_PSK
+          key_value: "!secret"
+        classification_rules: [BB-Rule-PopUp]
+      - name: BB-PopUp-Guest
+        comment: Simple shared passphrase, rotated per event — no portal infra required.
+        user_profile: BB-UP-PopUp-Guest
+        access_security:
+          security_type: PSK
+          key_management: WPA3_PSK
+          key_value: "!secret"
+        classification_rules: [BB-Rule-PopUp]
