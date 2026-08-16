@@ -32,14 +32,14 @@ config/
   device_templates.yaml     AP device templates (per AP model) + switch templates (not yet supported)
   network_policies.yaml     One shared Network Policy + its SSIDs
 scripts/
-  p1_client.py            API client (see "Talking to Platform ONE" below)
-  discover.py             Read-only sanity check — confirms the token works, lists key objects
-  push.py                 Idempotent create/configure — safe to re-run any time
-  teardown.py              Deletes exactly what push.py created (dry-run by default)
+  p1_client.py              API client (see "Talking to Platform ONE" below)
+  discover.py               Read-only sanity check — confirms the token works, lists key objects
+  push.py                   Idempotent create/configure — safe to re-run any time
+  teardown.py               Deletes exactly what push.py created (dry-run by default)
 state/
-  created_objects.json    Real object IDs from the live tenant — source of truth for deletion
+  created_objects.json      Real object IDs from the live tenant — source of truth for deletion
 .docs/
-  (gitignored)             Reference material pulled from the tenant's own API/UI — see below
+  (gitignored)              Reference material pulled from the tenant's own API/UI — see below
 ```
 
 ## Talking to Platform ONE
