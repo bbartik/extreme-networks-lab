@@ -28,9 +28,30 @@
 # (site_defaults, which device template/policy a site ends up on) AND now
 # genuinely sent as each site's real parent_id.
 #
-# Devices attach at the Site level in this lab. Building/Floor levels exist
-# in the real tree but aren't exercised here — same scoping decision the
-# Mist lab made by skipping AP claiming.
+# CORRECTED 2026-08-16: a device can only be claimed into a Building or
+# Floor, NOT directly into a Site — Site alone isn't a valid claim target.
+# This means Building/Floor aren't optional depth this lab was choosing to
+# skip (as the first draft assumed); they're required for the "deploy
+# real hardware" story to ever work at all. Every site below gets exactly
+# one building (default name "Main", overridable per site via `building:`)
+# and one floor under it (default "1", overridable via `floor:`) — the
+# minimum needed for a device to have somewhere real to attach. No site
+# below overrides the default; the field only exists for when one needs to.
+#
+# STILL BLOCKED, confirmed live 2026-08-16: the same `type`-field-ignored
+# bug that blocks true Site creation also blocks Building and Floor —
+# tested directly (a disposable POST /locations with type: "BUILDING"
+# came back type: "Site Group", identical to the SITE case). So the whole
+# chain (Site, Building, Floor) needs the same fix, whatever it turns out
+# to be — most likely found the same way everything else got solved:
+# create one real Site+Building+Floor by hand in the Platform ONE UI with
+# devtools open, capture the real request, reproduce it here. Not done
+# yet — SITE_TYPE_CREATE_CONFIRMED stays False in push.py and none of
+# this section is pushed until that happens.
+
+# Applied to every site unless overridden per-site with building:/floor:.
+default_building_name: "Main"
+default_floor_name: "1"
 
 site_groups:
   - name: BB-SG-DistributionCenters

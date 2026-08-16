@@ -100,10 +100,13 @@ passphrase per store, rather than needing a separate SSID per site.
 
 ## Known limitations
 
-- **Sites** can't be created as their own object type through the
-  current API — creation silently produces a generic location folder
-  instead of a true Site. `push.py` skips site creation rather than
-  create the wrong kind of object.
+- **Sites, Buildings, and Floors** can't be created as their own object
+  types through the current API — creation silently produces a generic
+  location folder instead, regardless of which type is requested.
+  `push.py` skips creating all three rather than create the wrong kind of
+  object. This matters more than it first looks: a device can only be
+  claimed into a Building or Floor, never a bare Site, so this blocks the
+  entire "deploy real hardware" story until resolved.
 - **Cloud Config Groups** require at least one real (already-claimed)
   device to create — none exist in this lab since there's no real
   hardware. Not load-bearing for anything else here since Classification
@@ -120,7 +123,8 @@ passphrase per store, rather than needing a separate SSID per site.
 
 1. Power on the device with a live uplink so it can phone home.
 2. Claim it into the tenant.
-3. Assign it to a Site: `PUT /devices/{id}/location`.
+3. Assign it to a Building or Floor (not the Site itself — that's not a
+   valid claim target): `PUT /devices/{id}/location`.
 4. Assign it the Network Policy: `PUT /devices/{id}/policy`.
 5. Add its device id to the relevant group in `cloud_config_groups.yaml`
    and re-run `push.py` — that group (and its classification rule) can

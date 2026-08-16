@@ -72,7 +72,8 @@ SITE_TYPE_CREATE_CONFIRMED = False
 # anything is sent.
 NON_API_KEYS = {"comment", "site_group", "radio_profile", "device_template_ap",
                  "network_policy", "vars", "name_prefix", "vlan_profile",
-                 "user_profile", "cloud_config_group", "classification_rules"}
+                 "user_profile", "cloud_config_group", "classification_rules",
+                 "building", "floor"}
 
 
 def load(name):
@@ -524,8 +525,9 @@ def load_state():
     # must never be deleted just because push.py configured it.
     state = {"vlan_profiles": {}, "user_profiles": {}, "radio_profiles": {},
               "cloud_config_groups": {}, "classification_rules": {},
-              "site_groups": {}, "sites": {}, "network_policies": {},
-              "ssids": {}, "ssids_created": {}, "ap_templates": {}}
+              "site_groups": {}, "sites": {}, "buildings": {}, "floors": {},
+              "network_policies": {}, "ssids": {}, "ssids_created": {},
+              "ap_templates": {}}
     if os.path.exists(STATE_PATH):
         with open(STATE_PATH, encoding="utf-8") as f:
             state.update(json.load(f))
@@ -709,6 +711,8 @@ def run(client, state, secrets):
         print(f"[site] skipped {len(locations['sites'])} site(s) — true SITE-type creation not confirmed, see module header")
     else:
         site_defaults = locations.get("site_defaults", {})
+        default_building_name = locations.get("default_building_name", "Main")
+        default_floor_name = locations.get("default_floor_name", "1")
         for raw_site in locations["sites"]:
             site = {**site_defaults.get(raw_site.get("site_group"), {}), **raw_site}
             parent_id = state["site_groups"].get(site.get("site_group"))
@@ -716,6 +720,22 @@ def run(client, state, secrets):
             sid, action = upsert_location(client, "SITE", site["name"], parent_id, extra)
             state["sites"][site["name"]] = sid
             print(f"[site] {site['name']}: {action} ({sid})")
+
+            # Buildings/Floors are required, not optional depth — a device
+            # can only be claimed into a Building or Floor, never a bare
+            # Site (see locations.yaml header, 2026-08-16 correction). One
+            # of each per site is the minimum needed for a real claim
+            # target. State keys are scoped by site name since the default
+            # building/floor names repeat across every site.
+            building_name = site.get("building", default_building_name)
+            bid, b_action = upsert_location(client, "BUILDING", building_name, sid)
+            state["buildings"][f"{site['name']}/{building_name}"] = bid
+            print(f"  [building] {building_name}: {b_action} ({bid})")
+
+            floor_name = site.get("floor", default_floor_name)
+            fid, f_action = upsert_location(client, "FLOOR", floor_name, bid)
+            state["floors"][f"{site['name']}/{building_name}/{floor_name}"] = fid
+            print(f"  [floor] {floor_name}: {f_action} ({fid})")
 
     # 6. Network policies (thin shell objects) + their SSIDs.
     # SSID creation IS real (see create_ssid_v0's header for the full

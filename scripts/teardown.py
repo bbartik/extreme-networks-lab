@@ -12,9 +12,11 @@ reconfigured its mode/PSK/VLAN.
 
 Deletion order goes most-dependent-first: SSIDs before the network
 policies they're attached to, classification rules before the Cloud
-Config Groups they reference, then locations (sites before site groups),
-then radio/user/vlan profiles (user profiles reference vlan profiles, so
-vlan profiles go last).
+Config Groups they reference, then locations (floors before buildings
+before sites before site groups — a device can only be claimed into a
+Building or Floor, so those are the deepest, most-dependent location
+nodes; see locations.yaml), then radio/user/vlan profiles (user profiles
+reference vlan profiles, so vlan profiles go last).
 """
 import json
 import os
@@ -29,10 +31,14 @@ DELETE_PLAN = [
     ("classification_rules", lambda c, i: c.delete(f"/classification-rules/{i}")),
     ("cloud_config_groups", lambda c, i: c.delete(f"/ccgs/{i}")),
     ("network_policies", lambda c, i: c.delete(f"/network-policies/{i}")),
-    # Sites and site groups both delete via the generic /locations/{id} —
-    # confirmed live 2026-08-15 that the typed path (/locations/sites/{id})
-    # 404's even though it looks valid from its own OPTIONS response; see
-    # push.py's upsert_location header comment for the full story.
+    # Floors, buildings, sites, and site groups all delete via the generic
+    # /locations/{id} — confirmed live 2026-08-15 that the typed path
+    # (/locations/sites/{id}) 404's even though it looks valid from its own
+    # OPTIONS response; see push.py's upsert_location header comment for
+    # the full story. Floors and buildings must go before sites since
+    # they're nested under them (delete the leaf first).
+    ("floors", lambda c, i: c.delete(f"/locations/{i}")),
+    ("buildings", lambda c, i: c.delete(f"/locations/{i}")),
     ("sites", lambda c, i: c.delete(f"/locations/{i}")),
     ("site_groups", lambda c, i: c.delete(f"/locations/{i}")),
     ("radio_profiles", lambda c, i: c.delete(f"/radio-profiles/{i}")),
