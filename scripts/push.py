@@ -973,6 +973,153 @@ def upsert_switch_template_v0(client, template_cfg, reference, existing_by_name,
     return resp["data"]["id"], "created"
 
 
+def create_switch_stack_v0(client, template_cfg, reference, policy_id,
+                            vlan_profile_ids=None, vlan_tags=None):
+    """CONFIRMED REAL 2026-08-16 from .docs/add-stack.json — a request the
+    user captured creating a real 2-unit "Retail-Stack2-Test" stack
+    template through the Platform ONE UI. Only reachable from WITHIN a
+    Network Policy's own template section (confirmed by the user
+    directly — the option doesn't appear outside that context), unlike
+    single-unit switch templates, which are created standalone via
+    upsert_switch_template_v0 and attached to a policy afterward via
+    attach_switch_templates_v0. That's why this is called per-policy
+    (see run()), not from the earlier policy-agnostic switch-template
+    loop.
+
+    Real endpoint: POST /config/device/templates/stacks (vocoLevel=12).
+    Body: {templates: [<one device-template per unit>], ownerId}. Each
+    unit's body is the SAME shape build_switch_template_body_v0 already
+    produces for a single-unit template, reused verbatim, plus two real
+    fields confirmed from the capture: `unitNumber` (1-indexed stack
+    position) and a shared `baseName` (each unit auto-named
+    `<baseName>-<unitNumber>`, e.g. "Retail-Stack2-Test-1"/"-2"). Also
+    sets `vlanAttrSettings.networkPolicyId` to the real policy id
+    directly at create time — present in the real capture, absent from
+    the single-unit path (which only gets this later, at attach time,
+    via _inject_vlan_attributes_v0).
+
+    A SECOND call exists too — PUT /inventory/extension/config/device/
+    stackTempInfo, same {templates: [...], ownerId} body but with each
+    unit's real id — captured from a real Save on an existing linked
+    stack (.docs/stack-put1.json/stack-put2.json) and originally thought
+    to be the missing "register these as a linked Stack Template" step.
+    DO NOT CALL IT. CONFIRMED LIVE 2026-08-16, the hard way: calling it
+    against already-existing real unit ids (this repo's own recreated
+    SWE-5320-Retail-Stack2/3, AND separately the user's own real
+    hand-built "Stack2") DESTROYED every one of them — a fresh GET
+    afterward returned 200 with an empty `{}` body for each id, and they
+    vanished from the policy's Switch Templates table and Common
+    Objects entirely. Whatever this endpoint actually does, it is NOT a
+    safe "link existing objects" call the way it looked from the
+    capture — it appears to consume/replace what it's given rather than
+    tag it. This function deliberately does NOT call it. If this gets
+    revisited, it needs a fresh, careful, low-stakes UI capture of a
+    TRUE first-time stack creation (not a re-save of an existing one)
+    before ever pointing it at real objects again.
+
+    UNCONFIRMED, still flagged in device_templates.yaml's
+    SWE-5320-Retail-Stack2 comment: (1) how a stack made ONLY via this
+    first call actually becomes selectable/linked for real — the "Stack
+    Template" grouping visible in Common Objects still doesn't happen
+    via this call alone; (2) whether leaving a unit's stacking-link XE
+    port out of its port_plan is sufficient to reserve it physically. No
+    update/list verb confirmed for this endpoint either — idempotency is
+    local-state-only (see run()), same reasoning as single-unit
+    switch/AP templates.
+    """
+    owner_id = int(client.owner_id)
+    templates = []
+    for unit_cfg in template_cfg["units"]:
+        unit_tpl_cfg = {**template_cfg, "port_plan": unit_cfg["port_plan"]}
+        unit_body = build_switch_template_body_v0(
+            reference, unit_tpl_cfg, owner_id, client, vlan_profile_ids, vlan_tags)
+        unit_number = unit_cfg["unit"]
+        unit_body["unitNumber"] = unit_number
+        unit_body["baseName"] = template_cfg["name"]
+        unit_body["name"] = f"{template_cfg['name']}-{unit_number}"
+        unit_body["vlanAttrSettings"]["networkPolicyId"] = policy_id
+        templates.append(unit_body)
+
+    body = {"templates": templates, "ownerId": owner_id}
+    resp = client.v0_post("/config/device/templates/stacks", body, extra_params={"vocoLevel": 12})
+    return resp
+
+
+def attach_switch_stack_v0(client, policy_id, template_cfg, reference, unit_ids,
+                            vlan_profile_ids=None, vlan_tags=None):
+    """Attach a real stack (created by create_switch_stack_v0) to the
+    policy so it shows up as a real, selectable row in the Switch
+    Templates table — CONFIRMED REAL AND WORKING 2026-08-16 from
+    .docs/stack-post1.json/stack-post2.json, a genuine first-time stack
+    creation captured from WITHIN the Network Policy's own "+" Switch
+    Templates flow (Device Model "Switch Engine 5320-Series-Stack (N)"),
+    not the general Common Objects template creation the earlier
+    add-stack.json capture came from — that's the real reason
+    Retail-Stack2-Test (add-stack.json, create-only) never linked while
+    a stack made this way does.
+
+    Real endpoint: POST /config/device/templateprofilestacks/
+    networkpolicy/{policyId}/profiles (vocoLevel=12) — the stack-specific
+    sibling of attach_switch_templates_v0's own
+    /config/device/templateprofiles/networkpolicy/{policyId} (no
+    "stacks"), structurally the same "attach a template profile to the
+    policy" concept already proven safe elsewhere in this file — NOT the
+    /inventory/extension/config/device/stackTempInfo PUT tried earlier,
+    which is confirmed DESTRUCTIVE (see create_switch_stack_v0's
+    docstring). GET 405's on this endpoint too, so there's no safe way
+    to read it back — confirmed correct only by checking the policy's
+    Switch Templates table in the real UI afterward.
+
+    Body is a JSON ARRAY (not one object) of one "device-stack-
+    template-profile" entry per unit, each wrapping the FULL unit
+    device-template (real id, and vlanAttrSettings populated with the
+    real policy-level VLAN Attributes list via _inject_vlan_attributes_v0
+    — present in the real capture) as `defaultDeviceTemplate`, plus
+    productType/deviceFunction/unitNumber/classifiedEntries/
+    enableClassification. Confirmed live: this POST succeeds and the
+    stack immediately shows up as a real row (Device Model "Switch
+    Engine 5320-Series-Stack (N)") in the policy's Switch Templates
+    table, same as a stack built entirely by hand in the UI.
+
+    UNCONFIRMED: real classification-rule gating for a stack — the
+    captured request had `classifiedEntries: []`/`enableClassification:
+    False` (the user's own test stack had no rule attached either), so
+    this function always submits it unclassified/ungated, same as the
+    real capture. `template_cfg`'s own `classification_rules:` stays
+    informational only for now (matching device_templates.yaml's
+    comment) until a real classified-stack request is captured.
+    """
+    owner_id = int(client.owner_id)
+    profiles = []
+    for unit_cfg in template_cfg["units"]:
+        unit_number = unit_cfg["unit"]
+        unit_name = f"{template_cfg['name']}-{unit_number}"
+        real_id = unit_ids[unit_name]
+        unit_tpl_cfg = {**template_cfg, "port_plan": unit_cfg["port_plan"]}
+        full = build_switch_template_body_v0(
+            reference, unit_tpl_cfg, owner_id, client, vlan_profile_ids, vlan_tags)
+        thin = client.v0_get(f"/config/device/templates/{real_id}")["data"]
+        full["id"] = thin["id"]
+        full["createdAt"] = thin["createdAt"]
+        full["updatedAt"] = thin["updatedAt"]
+        full["unitNumber"] = unit_number
+        full["baseName"] = template_cfg["name"]
+        full["name"] = unit_name
+        full = _inject_vlan_attributes_v0(client, full, policy_id)
+        profiles.append({
+            "ownerId": owner_id,
+            "jsonType": "device-stack-template-profile",
+            "classifiedEntries": [],
+            "defaultDeviceTemplate": full,
+            "productType": template_cfg.get("product_type", "SwitchEngine_5320_16P_4XE"),
+            "deviceFunction": "Switch",
+            "unitNumber": unit_number,
+            "enableClassification": False,
+        })
+    return client.v0_post(f"/config/device/templateprofilestacks/networkpolicy/{policy_id}/profiles",
+                           profiles, extra_params={"vocoLevel": 12})
+
+
 # Real query string captured verbatim from the "AP Template" tab
 # (.docs/ap-add-with-rule.json) — includes a duplicate `vocoLevel` param
 # (12 then 5) and every AP model XIQ supports. Not independently minimized
@@ -1239,7 +1386,7 @@ def load_state():
               "cloud_config_groups": {}, "classification_rules": {},
               "site_groups": {}, "sites": {}, "buildings": {}, "floors": {},
               "network_policies": {}, "ssids": {}, "ssids_created": {},
-              "ap_templates": {}, "switch_templates": {}, "radius_servers": {}}
+              "ap_templates": {}, "switch_templates": {}, "switch_stacks": {}, "radius_servers": {}}
     if os.path.exists(STATE_PATH):
         with open(STATE_PATH, encoding="utf-8") as f:
             state.update(json.load(f))
@@ -1465,6 +1612,9 @@ def run(client, state, secrets):
     SWITCH_PORT_ROLES_CONFIRMED = {"access", "trunk"}
     switch_reference = None
     for tpl in device_templates_cfg.get("switch_templates", []):
+        if "units" in tpl:
+            print(f"[switch_template] {tpl['name']}: skipped here — real stack, created per-policy below (create_switch_stack_v0)")
+            continue
         roles = {g["role"] for g in tpl.get("port_plan", [])}
         if "port_plan" not in tpl:
             print(f"[switch_template] {tpl['name']}: skipped — design not yet pushed, see device_templates.yaml header")
@@ -1682,6 +1832,40 @@ def run(client, state, secrets):
             state["classification_rules"], state["switch_templates"],
             state["vlan_profiles"], vlan_tags)
         print(f"  attached {switch_attached_count} switch template(s) to {pol['name']}")
+
+        # 7d. Real multi-unit stack templates (`units:` instead of
+        # `port_plan:`) — see create_switch_stack_v0's docstring: this
+        # endpoint is policy-scoped at creation time (only reachable from
+        # within a policy in the real UI), unlike single-unit switch
+        # templates above, so it's created here per-policy rather than in
+        # the earlier policy-agnostic loop. Local-state idempotency only
+        # (state["switch_stacks"]) — no confirmed list/update verb for
+        # this endpoint yet, same reasoning as switch/AP templates.
+        for tpl in device_templates_cfg.get("switch_templates", []):
+            if "units" not in tpl:
+                continue
+            name = tpl["name"]
+            if name in state["switch_stacks"]:
+                print(f"  [switch_stack] {name}: exists {state['switch_stacks'][name]}")
+                continue
+            if switch_reference is None:
+                switch_reference = load_switch_template_reference()
+            resp = create_switch_stack_v0(client, tpl, switch_reference, pid,
+                                           state["vlan_profiles"], vlan_tags)
+            created = resp.get("data", resp).get("templates", []) if isinstance(resp, dict) else resp
+            unit_ids = {t["name"]: t["id"] for t in created}
+            state["switch_stacks"][name] = unit_ids
+            print(f"  [switch_stack] {name}: created {len(unit_ids)} unit(s) -> {unit_ids}")
+
+            # Attach it to this policy for real — see
+            # attach_switch_stack_v0's docstring. Gated on the create
+            # step just having run this call (rather than its own state
+            # key) since re-running the attach POST repeatedly is
+            # unconfirmed-safe territory; only do it once, right after a
+            # fresh create.
+            attach_switch_stack_v0(client, pid, tpl, switch_reference, unit_ids,
+                                    state["vlan_profiles"], vlan_tags)
+            print(f"  [switch_stack] {name}: attached to {pol['name']}")
 
 if __name__ == "__main__":
     main()

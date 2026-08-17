@@ -412,38 +412,132 @@ device_templates:
 
     - name: SWE-5320-Retail-Stack2
       comment: >
-        Two units, one stacking link between them (XE1 on each side) —
-        3 of 4 XE ports stay free per unit. Uplink lives on unit 1 only.
+        Two units, stacking link between them — 2 of 4 XE ports stay
+        free per unit. Uplink lives on unit 1 only. CORRECTED 2026-08-16
+        from the user's own real physical stack, ready to onboard: the
+        stacking ports are physical 19-20 (API 18-19, i.e. XE3-XE4), NOT
+        physical 17/XE1 as this file first guessed — both physical
+        19-20 are used together for the inter-unit link, not just one.
+        Every unit below leaves API 18-19 out of its port_plan entirely;
+        API 16-17 (physical 17-18) are the real spare XE ports.
+        RESOLVED 2026-08-16 — this whole `Stack2`/`Stack3` design was
+        "planning data, gated off" (per the old header note) because
+        there was no confirmed real creation mechanism, and the
+        `units:`/`port_usages:` shape below was speculative and never
+        actually parsed by push.py. Real mechanism now confirmed live
+        from .docs/add-stack.json (a real 2-unit "Retail-Stack2-Test"
+        stack created through the Platform ONE UI, only reachable from
+        WITHIN a Network Policy's own template section — see
+        create_switch_stack_v0 in push.py): POST
+        /config/device/templates/stacks with body {templates: [<one
+        device-template per unit>], ownerId}, each unit body the SAME
+        shape build_switch_template_body_v0 already produces plus two
+        new real fields — `unitNumber` (1-indexed) and a shared
+        `baseName` (each unit auto-named `<baseName>-<unitNumber>`) —
+        and `vlanAttrSettings.networkPolicyId` set to the real policy id
+        directly at create time (absent from the single-unit path).
+        `units:` below now holds a real per-unit `port_plan:` (same
+        schema as SWE-5320-Retail-Stack1's, not the old
+        `port_usages`/string-range shape), reusing the exact same
+        confirmed-live "Retail AP"/BB-PT-Retail-Staff Port Types proven
+        on Stack1. IMPORTANT, confirmed from the real capture: the
+        platform does NOT auto-manage stacking-link ports — both units
+        in the real test came back with identical, full, ordinary port
+        layouts, no XE port specially reserved. The stacking-link XE
+        ports below are simply left OUT of every unit's port_plan
+        (UNCONFIRMED whether that's actually sufficient to reserve them
+        physically, or whether a real stack claim needs an explicit
+        stacking flag/step this session never found — worth verifying
+        against a real claimed 2-unit device before trusting this at a
+        real store).
+
+        RESOLVED AND CONFIRMED LIVE END-TO-END 2026-08-16 — real
+        mechanism is TWO calls, but not the two this file guessed at
+        first. Dead end first, for the record: re-saving an EXISTING
+        linked stack (.docs/stack-put1.json/stack-put2.json) fires POST
+        /config/device/templates/stacks plus PUT
+        /inventory/extension/config/device/stackTempInfo — that second
+        one looked like the missing "register as a linked stack" call
+        but is NOT safe: tried against real existing unit ids (this
+        repo's own recreated SWE-5320-Retail-Stack2/3, and separately
+        the user's own hand-built stack) and it DELETED every one of
+        them (fresh GET returned empty `{}` afterward). Do not call it.
+
+        The REAL answer came from capturing a genuine FIRST-TIME stack
+        creation from within the policy's own "+" Switch Templates flow
+        (.docs/stack-post1.json/stack-post2.json), not the general
+        Common Objects template creation add-stack.json came from —
+        that distinction is the actual reason Retail-Stack2-Test never
+        linked while a stack made this way does. Two POSTs fire: (1) the
+        same /config/device/templates/stacks call create_switch_stack_v0
+        already made. (2) POST /config/device/templateprofilestacks/
+        networkpolicy/{policyId}/profiles — the stack-specific sibling of
+        attach_switch_templates_v0's own /config/device/templateprofiles/
+        networkpolicy/{policyId} (no "stacks"), same safe "attach a
+        template profile to the policy" family used successfully
+        elsewhere in this file, structurally nothing like the destructive
+        stackTempInfo PUT. Body is a JSON ARRAY of one
+        "device-stack-template-profile" entry per unit, each wrapping the
+        FULL unit device-template (real id, vlanAttrSettings populated
+        via _inject_vlan_attributes_v0) as `defaultDeviceTemplate`. See
+        attach_switch_stack_v0 in push.py — confirmed live: both
+        SWE-5320-Retail-Stack2 and SWE-5320-Retail-Stack3 now show up as
+        real rows (Device Model "Switch Engine 5320-Series-Stack (2)"/"(3)")
+        in the policy's Switch Templates table, and every individual unit
+        (SWE-5320-Retail-Stack2-1/-2, Stack3-1/-2/-3) shows a real
+        populated "Stack Template" link back to its parent in Common
+        Objects — verified visually, not just via API response.
+
+        STILL UNCONFIRMED: real classification-rule gating for a stack —
+        the real capture had `classifiedEntries: []`/`enableClassification:
+        false` (ungated), so attach_switch_stack_v0 always submits it
+        that way too; `classification_rules:` below stays informational
+        only until a real classified-stack request gets captured. Also
+        unconfirmed: how a real physical stack picks up these per-unit
+        templates at DEVICE CLAIM time.
       product_type: SwitchEngine_5320_16P_4XE
       role: access
-      stack_size: 2
       classification_rules: [BB-Rule-Retail, BB-Rule-RetailMall]
       units:
         - unit: 1
-          stacking_links_used: 1
-          port_usages:
-            pos:    { mode: access, native_vlan: wired_pos,   ports: "1-4" }
-            staff:  { mode: access, native_vlan: wired_staff, ports: "5-8" }
-            iot:    { mode: access, native_vlan: wired_iot,   ports: "9-12" }
-            ap:
-              mode: trunk
-              native_vlan: wired_mgmt
-              tagged_vlans: [wifi_retail_pos, wifi_retail_staff, wifi_retail_guest]
-              ports: "13-16"
-            stack_link: { ports: "XE1" }
-            uplink: { mode: trunk, all_vlans: true, ports: "XE2-XE3" }
+          port_plan:
+            - role: trunk
+              ports: [0, 1, 2, 3]
+              port_type_name: "Retail AP"
+              trunk_vlans: [BB-VP-Retail-POS, BB-VP-Retail-Staff, BB-VP-Retail-Guest]
+              comment: AP ports (physical 1-4), same "Retail AP" Port Type as Stack1.
+            - role: trunk
+              ports: [15]
+              comment: Firewall uplink (physical 16) — unit 1 only, same as Stack1.
+            - role: access
+              ports: [4, 5]
+              vlan: BB-VP-Retail-Staff
+              comment: Staff wired terminals (physical 5-6), same BB-PT-Retail-Staff as Stack1.
+            - role: access
+              ports: [6, 7, 8, 9, 10, 11, 12, 13, 14]
+              comment: Spare (ETH), default VLAN.
+            - role: access
+              ports: [16, 17]
+              comment: Spare (SFP/XE) — physical 17-18 (API 16-17), see the stacking-port note above.
         - unit: 2
-          stacking_links_used: 1
-          port_usages:
-            pos:    { mode: access, native_vlan: wired_pos,   ports: "1-4" }
-            staff:  { mode: access, native_vlan: wired_staff, ports: "5-8" }
-            iot:    { mode: access, native_vlan: wired_iot,   ports: "9-12" }
-            ap:
-              mode: trunk
-              native_vlan: wired_mgmt
-              tagged_vlans: [wifi_retail_pos, wifi_retail_staff, wifi_retail_guest]
-              ports: "13-16"
-            stack_link: { ports: "XE1" }
+          port_plan:
+            - role: trunk
+              ports: [0, 1, 2, 3]
+              port_type_name: "Retail AP"
+              trunk_vlans: [BB-VP-Retail-POS, BB-VP-Retail-Staff, BB-VP-Retail-Guest]
+              comment: AP ports (physical 1-4).
+            - role: access
+              ports: [4, 5]
+              vlan: BB-VP-Retail-Staff
+              comment: Staff wired terminals (physical 5-6).
+            - role: access
+              ports: [6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+              comment: >
+                Spare (ETH) — includes physical 16 (API 15) since unit 2
+                has no firewall uplink (that's unit 1 only).
+            - role: access
+              ports: [16, 17]
+              comment: Spare (SFP/XE) — physical 17-18 (API 16-17), see the stacking-port note above.
 
     - name: SWE-5320-Retail-Stack3
       comment: >
@@ -455,46 +549,62 @@ device_templates:
         free-port count.
       product_type: SwitchEngine_5320_16P_4XE
       role: access
-      stack_size: 3
       classification_rules: [BB-Rule-Retail, BB-Rule-RetailMall]
       units:
         - unit: 1
-          stacking_links_used: 1
-          port_usages:
-            pos:    { mode: access, native_vlan: wired_pos,   ports: "1-4" }
-            staff:  { mode: access, native_vlan: wired_staff, ports: "5-8" }
-            iot:    { mode: access, native_vlan: wired_iot,   ports: "9-12" }
-            ap:
-              mode: trunk
-              native_vlan: wired_mgmt
-              tagged_vlans: [wifi_retail_pos, wifi_retail_staff, wifi_retail_guest]
-              ports: "13-16"
-            stack_link: { ports: "XE1", note: "link to unit 2" }
-            uplink: { mode: trunk, all_vlans: true, ports: "XE2-XE3" }
+          port_plan:
+            - role: trunk
+              ports: [0, 1, 2, 3]
+              port_type_name: "Retail AP"
+              trunk_vlans: [BB-VP-Retail-POS, BB-VP-Retail-Staff, BB-VP-Retail-Guest]
+            - role: trunk
+              ports: [15]
+              comment: Firewall uplink (physical 16) — unit 1 only.
+            - role: access
+              ports: [4, 5]
+              vlan: BB-VP-Retail-Staff
+            - role: access
+              ports: [6, 7, 8, 9, 10, 11, 12, 13, 14]
+              comment: Spare (ETH).
+            - role: access
+              ports: [16, 17]
+              comment: Spare (SFP/XE) — physical 17-18 (API 16-17); physical 19-20 reserved for the stacking link to unit 2.
         - unit: 2
-          stacking_links_used: 2
-          port_usages:
-            pos:    { mode: access, native_vlan: wired_pos,   ports: "1-4" }
-            staff:  { mode: access, native_vlan: wired_staff, ports: "5-8" }
-            iot:    { mode: access, native_vlan: wired_iot,   ports: "9-12" }
-            ap:
-              mode: trunk
-              native_vlan: wired_mgmt
-              tagged_vlans: [wifi_retail_pos, wifi_retail_staff, wifi_retail_guest]
-              ports: "13-16"
-            stack_link: { ports: "XE1-XE2", note: "XE1 to unit 1, XE2 to unit 3" }
+          comment: >
+            No spare-XE group at all for this unit, unlike every other
+            unit in this file — INFERRED, not independently confirmed:
+            since the real 2-unit stack needs BOTH physical 19-20 for one
+            link (see template comment above), the middle unit's two
+            links (to unit 1 and unit 3) need all 4 XE ports between
+            them — API 16-17 to one neighbor, API 18-19 to the other —
+            leaving zero free XE on this unit. Verify against a real
+            claimed 3-unit stack before trusting this split.
+          port_plan:
+            - role: trunk
+              ports: [0, 1, 2, 3]
+              port_type_name: "Retail AP"
+              trunk_vlans: [BB-VP-Retail-POS, BB-VP-Retail-Staff, BB-VP-Retail-Guest]
+            - role: access
+              ports: [4, 5]
+              vlan: BB-VP-Retail-Staff
+            - role: access
+              ports: [6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+              comment: Spare (ETH) — includes physical 16 (API 15), no uplink on the middle unit.
         - unit: 3
-          stacking_links_used: 1
-          port_usages:
-            pos:    { mode: access, native_vlan: wired_pos,   ports: "1-4" }
-            staff:  { mode: access, native_vlan: wired_staff, ports: "5-8" }
-            iot:    { mode: access, native_vlan: wired_iot,   ports: "9-12" }
-            ap:
-              mode: trunk
-              native_vlan: wired_mgmt
-              tagged_vlans: [wifi_retail_pos, wifi_retail_staff, wifi_retail_guest]
-              ports: "13-16"
-            stack_link: { ports: "XE1", note: "link to unit 2" }
+          port_plan:
+            - role: trunk
+              ports: [0, 1, 2, 3]
+              port_type_name: "Retail AP"
+              trunk_vlans: [BB-VP-Retail-POS, BB-VP-Retail-Staff, BB-VP-Retail-Guest]
+            - role: access
+              ports: [4, 5]
+              vlan: BB-VP-Retail-Staff
+            - role: access
+              ports: [6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+              comment: Spare (ETH) — includes physical 16 (API 15), no uplink on an end unit besides unit 1.
+            - role: access
+              ports: [16, 17]
+              comment: Spare (SFP/XE) — physical 17-18 (API 16-17); physical 19-20 reserved for the stacking link to unit 2.
 
     - name: SWE-5320-DistributionCenter-Core
       comment: >
