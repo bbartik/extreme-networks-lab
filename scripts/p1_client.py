@@ -11,10 +11,15 @@ came from a live GET, no POST/PUT/DELETE has been run this session):
   /radio-profiles alone already spans 2 pages — get_all() below follows
   ?page=N until total_pages is exhausted, otherwise upsert_by_name would
   silently miss objects on later pages and duplicate them.
-- /locations/sites and /locations/buildings reject GET outright (400
-  "Request method 'GET' not supported") — there is no list endpoint for
-  those object types at all, live. Existing sites/buildings have to be
-  read out of /locations/tree instead; list_locations_by_type() does that.
+- /locations/sites and /locations/buildings (PLURAL) reject GET outright
+  (400 "Request method 'GET' not supported"). CORRECTED 2026-08-16: this
+  is not "no list endpoint exists" — the SINGULAR typed paths
+  (/locations/site, /locations/building, /locations/floor) are real GET
+  list endpoints (paginated ?page=N&limit=N, see
+  get_all_typed_location()), confirmed from the user's own already-working
+  reference scripts. Site Groups still only have /locations/tree to read
+  from (no /locations/site-group singular path found/tried yet) —
+  list_locations_by_type() stays the read path for that one type.
 - Still unverified: any POST/PUT/DELETE body shape for any object type.
   Before trusting push.py at scale, do the create -> GET -> delete
   round-trip per type yourself (HANDOFF Section 2.2).
@@ -178,6 +183,36 @@ class P1Client:
             return match["id"], "updated"
         created = self.post(list_path, body)
         return created["id"], "created"
+
+    def get_all_typed_location(self, node_type, page_size=100):
+        """GET the typed, singular location list endpoint — /locations/site,
+        /locations/building, /locations/floor — paginated via ?page=N&limit=
+        page_size (NOT the {page, total_pages, data} envelope the other v1
+        list endpoints use; this one is a bare list, or missing entirely
+        once a page comes back empty).
+
+        Confirmed real 2026-08-16 from two already-working reference
+        scripts the user supplied (.docs/xiq_sites.py,
+        .docs/xiq_add_buildings_and_floors.py), dated Oct 2025 — real
+        production automation predating this lab. This directly overturns
+        this module's earlier "no GET list endpoint exists for these
+        types" note: that belief came from testing the PLURAL path
+        (/locations/sites), which does reject GET with a 400. The
+        singular, typed path is a different, real route.
+        """
+        path = f"/locations/{node_type}"
+        page = 1
+        items = []
+        while True:
+            resp = self.get(f"{path}?page={page}&limit={page_size}")
+            page_items = resp if isinstance(resp, list) else resp.get("data", [])
+            if not page_items:
+                break
+            items.extend(page_items)
+            if len(page_items) < page_size:
+                break
+            page += 1
+        return items
 
     def location_tree(self):
         return self.get("/locations/tree")

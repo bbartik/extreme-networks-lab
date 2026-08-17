@@ -31,11 +31,20 @@ DELETE_PLAN = [
     ("classification_rules", lambda c, i: c.delete(f"/classification-rules/{i}")),
     ("cloud_config_groups", lambda c, i: c.delete(f"/ccgs/{i}")),
     ("network_policies", lambda c, i: c.delete(f"/network-policies/{i}")),
-    # Floors, buildings, sites, and site groups all delete via the generic
-    # /locations/{id} — confirmed live 2026-08-15 that the typed path
-    # (/locations/sites/{id}) 404's even though it looks valid from its own
-    # OPTIONS response; see push.py's upsert_location header comment for
-    # the full story. Floors and buildings must go before sites since
+    # Site groups delete via the generic /locations/{id} — confirmed live
+    # 2026-08-15 that the typed item path (/locations/site-groups/{id})
+    # 404's even though it looks valid from its own OPTIONS response; see
+    # push.py's upsert_location header comment for the full story.
+    #
+    # Sites/buildings/floors are created through their own typed
+    # collection paths (POST /locations/site etc., see push.py's
+    # upsert_typed_location) — UNCONFIRMED whether DELETE follows the same
+    # generic /locations/{id} pattern as Site_Group, or needs a typed item
+    # path of its own; neither reference script the user supplied does a
+    # delete. Using the generic path as the best available guess since
+    # it's confirmed to work for every other location type; if it 404's,
+    # that's the next thing to capture from the real UI rather than a sign
+    # the id is wrong. Floors and buildings must go before sites since
     # they're nested under them (delete the leaf first).
     ("floors", lambda c, i: c.delete(f"/locations/{i}")),
     ("buildings", lambda c, i: c.delete(f"/locations/{i}")),

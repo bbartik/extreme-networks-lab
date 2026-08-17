@@ -51,21 +51,36 @@
 # configures it via the real endpoints found in that spec:
 #   PUT  /ssids/{id}/mode/open                — no body
 #   PUT  /ssids/{id}/mode/psk                  — key_management/encryption_method/key_type/key_value(/sae_group)
+#   PUT  /ssids/{id}/mode/dot1x                — enable_idm/encryption_method/key_management/radius_server_group_id
+#   POST /ssids/{id}/radius-server-group/:attach — bare RADIUS server id (see radius.yaml — no separate "group" object exists)
 #   POST /ssids/{id}/user-profile/:attach      — bare user_profile id (VLAN)
 #   POST /network-policies/{id}/ssids/:add     — array of ssid ids, attaches to the policy
-# PPSK and DOT1X modes need additional real-but-unexplored object types
-# (user_group_ids, radius_server_group_id) — see the BB-Retail-POS and
-# BB-Corp-Staff comments below — and are skipped by push.py rather than
-# guessed at.
+# DOT1X is now real and configured (see radius.yaml, and BB-Corp-Staff/
+# BB-Retail-Staff below) — resolved 2026-08-16 at the user's direction
+# ("just use a pretend radius server"), using a real but fake/placeholder
+# RADIUS server since this lab has no real RADIUS infrastructure. PPSK
+# still needs a real "User Group" object (`user_group_ids`,
+# `POST /usergroups` — confirmed to exist in api-1.json but meaningfully
+# more complex: required nested delivery_settings/expiration_settings/
+# password_settings sub-objects, none of it explored yet) — see
+# BB-Retail-POS below, still skipped by push.py rather than guessed at.
 #
 # Real SSID auth schema, read directly off live SSIDs in this tenant:
 #   access_security: {
-#     security_type: "OPEN" | "PSK" | "PPSK",   # DOT1X value unconfirmed — no live example existed to check
+#     security_type: "OPEN" | "PSK" | "PPSK" | "TYPE_802DOT1X",
 #     key_type: "ASCII",                          # present for PSK, absent entirely for PPSK
 #     key_value: "<passphrase>" | "",              # empty for OPEN and PPSK alike
 #     key_management: "WPA3_PSK" | "WPA2_PSK",
 #     encryption_method: "CCMP",
 #   }
+# DOT1X mode (a separate call, PUT /ssids/{id}/mode/dot1x, confirmed from
+# api-1.json's XiqSetSsidModeDot1xRequest — not part of access_security):
+#   { enable_idm: false, key_management: "WPA2_8021X" | "WPA3_8021X" |
+#     "WPA_8021X" | "AUTO_8021X", encryption_method: "CCMP" | "TKIP" |
+#     "AUTO_TKIP_CCMP" | "AES192", radius_server_group_id: <id> }
+# enable_idm: false means "use my own RADIUS, not Extreme's hosted
+# ExtremeCloud IQ Authentication Service" — the right choice here since
+# BB-RADIUS-Pretend is our own (fake) server, not Extreme's IDM.
 #   default_user_profile: <id>   # -> resolves to a VLAN via vlan_profiles.yaml, see that file
 #
 # classification_rules: [<name>, ...] — real, working, confirmed live
@@ -82,12 +97,21 @@
 
 network_policies:
 
-  - name: BB-NP-Wireless
-    type: WIRELESS_ACCESS
+  - name: BB-NP-Lab
+    type: NETWORK_ACCESS_AND_SWITCHING
     comment: >
-      One policy for the whole org (see header) — every SSID below,
-      meant to be assigned to every AP once device-assignment and SSID
-      creation are both actually working.
+      One policy for the whole org, wireless AND wired (see header) —
+      every SSID below plus the AP and switch device templates in
+      device_templates.yaml, meant to be assigned to every device once
+      device-assignment is actually working. Renamed from BB-NP-Wireless
+      2026-08-16 once switch templates joined it too. `type` real values
+      confirmed from .docs/api-1.json's XiqNetworkPolicyType enum
+      (NETWORK_ACCESS_AND_SWITCHING, BRANCH_ROUTING, WIRELESS_ACCESS,
+      SWITCHING, and 3 combined variants) — the original `WIRELESS_ACCESS`
+      value only checked the "Wireless" box in the real UI's policy
+      wizard, leaving "Switching/Routing" unchecked even with a switch
+      device-template-profile already attached; the user caught this from
+      a screenshot of the real wizard.
     ssids:
       - name: BB-DC-Ops
         comment: >
@@ -110,16 +134,19 @@ network_policies:
 
       - name: BB-Corp-Staff
         comment: >
-          dot1x against corporate IdP/RADIUS. security_type is
-          UNCONFIRMED — no live dot1x SSID existed in this tenant to
-          check the real enum value against; "DOT1X" is a best-effort
-          placeholder. radius_client_profile also needs a real RADIUS
-          client object (its own object type, not modeled/created here).
+          dot1x against a fake/placeholder RADIUS server (see
+          radius.yaml — at the user's direction: "just use a pretend
+          radius server", this lab has no real RADIUS infrastructure).
+          security_type TYPE_802DOT1X confirmed real from
+          .docs/api-1.json's XiqSsidAccessSecurityType enum (the earlier
+          "DOT1X" placeholder guess was wrong).
         user_profile: BB-UP-Corp-Staff
         access_security:
-          security_type: DOT1X   # UNCONFIRMED, see comment above
-        radius_client_profile:
-          default_radius_client_object_id: null   # needs a real RADIUS client object, not modeled — see README
+          security_type: TYPE_802DOT1X
+        dot1x:
+          key_management: WPA2_8021X
+          encryption_method: CCMP
+          radius_server: BB-RADIUS-Pretend
         classification_rules: [BB-Rule-CorporateOffice]
       - name: BB-Corp-Guest
         comment: >
@@ -140,10 +167,14 @@ network_policies:
         classification_rules: [BB-Rule-CorporateOffice]
 
       - name: BB-Retail-Staff
-        comment: dot1x for store associates — same UNCONFIRMED security_type placeholder as corporate staff.
+        comment: dot1x for store associates — same fake/placeholder RADIUS server as BB-Corp-Staff.
         user_profile: BB-UP-Retail-Staff
         access_security:
-          security_type: DOT1X   # UNCONFIRMED, see BB-Corp-Staff note
+          security_type: TYPE_802DOT1X
+        dot1x:
+          key_management: WPA2_8021X
+          encryption_method: CCMP
+          radius_server: BB-RADIUS-Pretend
         classification_rules: [BB-Rule-Retail, BB-Rule-RetailMall]
       - name: BB-Retail-Guest
         comment: Email-capture portal — portal shape unconfirmed, OPEN security_type is confirmed real.

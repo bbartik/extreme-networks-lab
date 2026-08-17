@@ -24,12 +24,12 @@ Full reasoning for each choice is in the `comment` fields inside the YAML files.
 
 ```
 config/
-  locations.yaml            Site Groups + Sites
+  locations.yaml            Site Groups + Sites (each Site gets one Building + one Floor — see below)
   vlan_profiles.yaml        VLAN Profiles + User Profiles (the VLAN-assignment chain for an SSID)
   radio_profiles.yaml       Radio Profiles, one object per band
   cloud_config_groups.yaml  Device groups — populated once real hardware is claimed into a site
   classification_rules.yaml Rules that route SSIDs/AP templates to the right site group
-  device_templates.yaml     AP device templates (per AP model) + switch templates (not yet supported)
+  device_templates.yaml     AP device templates (per AP model) + switch templates (per model+stack size, one real so far)
   network_policies.yaml     One shared Network Policy + its SSIDs
 scripts/
   p1_client.py              API client (see "Talking to Platform ONE" below)
@@ -66,6 +66,14 @@ Both are needed because SSIDs and AP device templates can only be
 existing one but has no creation endpoint for either object type at all.
 `push.py` uses `v0` for that one step and `v1` for everything else.
 
+Within `v1` itself, locations aren't as uniform as they look: Site Groups
+go through one generic, type-agnostic pair of paths (`POST /locations`,
+`PUT /locations/{id}`), while Sites, Buildings, and Floors each have
+their own dedicated, singular-named path (`POST /locations/site`, etc.) —
+sending `type: "SITE"` to the generic endpoint silently creates a Site
+Group instead of erroring, which is what made this easy to miss at
+first.
+
 ## AP Device Templates
 
 A device template is scoped to a specific **AP model** (`product_type`,
@@ -83,16 +91,83 @@ base (see `.docs/ap-template.json` if present, gitignored) — `push.py`
 customizes a copy of it per format (power ceiling, which bands are on)
 rather than constructing one from nothing.
 
+## Switch Templates
+
+Wired hardware is Switch Engine 5320-16P-4XE. Unlike AP templates,
+Extreme needs a **separate template per stack size** — a stack's uplink
+ports aren't uniformly free across every unit, since some get consumed by
+the inter-unit stacking links themselves, and how many depends on a
+unit's position in the stack. `device_templates.yaml`'s
+`switch_templates:` models this: `SWE-5320-Retail-Stack1/2/3` (stores can
+run 1-3 units), `SWE-5320-{Format}-Core` (an MC-LAG pair — two
+independent standalone switches, not a 2-unit stack), and
+`SWE-5320-{Format}-IDF-Stack1/2/3` (access closets, same variable sizing
+as Retail). Pop-up stores don't get one — no wired infrastructure in an
+uncabled space.
+
+Two are real and pushed: `SWE-5320-Default` (no classification rule —
+the policy-wide fallback for the whole product type, plain Access Port
+on every port) and `SWE-5320-Retail-Stack1` (classification-rule-gated
+to Retail/RetailMall, `port_plan:` assigns AP ports and the firewall
+uplink the `trunk` role). Every other template in the list is still
+planning data, skipped per-item until each one gets its own real
+create/capture pass the same way this one did. One real, permanent
+limitation: a trunk port can only be used as Extreme's own shared
+predefined default, completely unmodified — it can't be customized to
+tag specific VLANs or moved between templates, so trunk ports in this
+lab carry every VLAN rather than a scoped list (still satisfies "carry
+the wifi VLANs to the AP," just less precisely than originally intended).
+See `ENGINEERING-NOTES.md` for the full story of how that limitation was
+confirmed.
+
+They attach to the same shared `BB-NP-Lab` policy as SSIDs and AP
+templates, via the same Site-Group-based Classification Rules. One real
+gap those rules can't close: they resolve to Site Group granularity, so
+they can pick a default template for an entire DC/Corp site but can't
+distinguish a Core switch from an IDF switch within it — Core has to be
+assigned directly to its two device ids at claim time.
+
+## Sites, Buildings, and Floors
+
+A device can only be claimed into a Building or Floor — never a bare
+Site. `push.py` creates one Building (`Main`) and one Floor (`1`) under
+every Site for exactly that reason; both are overridable per site with
+`building:`/`floor:` in `locations.yaml`. Site, Building, and Floor each
+have their own typed API path (`/locations/site`, `/locations/building`,
+`/locations/floor`) completely separate from the one Site Groups use —
+see "Talking to Platform ONE" below.
+
 ## Network Policies & Classification Rules
 
-All sites share **one** Network Policy (`BB-NP-Wireless`) rather than one
-per site format — a policy is meant to cover any group of devices that
-share a characteristic, so a single shared policy plus per-format
+All sites share **one** Network Policy (`BB-NP-Lab`) rather than one per
+site format — a policy is meant to cover any group of devices that share
+a characteristic, so a single shared policy plus per-format
 Classification Rules is the more native shape than duplicating policies.
-Each Classification Rule matches a Site Group, and both SSIDs and AP
-device templates get tagged with the rule for their format — so the one
-policy resolves to different SSIDs/RF behavior depending on which site
-group a device sits in.
+This holds for wired too: switch templates attach to the same
+`BB-NP-Lab` policy as SSIDs and AP templates, not a separate wired
+policy — renamed from `BB-NP-Wireless` once switch templates joined it,
+so the name doesn't undersell what it actually covers. Each
+Classification Rule matches a Site Group, and SSIDs, AP templates, and
+switch templates all get tagged with the rule for their format — so the
+one policy resolves to different behavior depending on which site group
+a device sits in.
+
+Three separate things have to all be true for a policy to actually cover
+wired devices — easy to miss since each fails silently on its own:
+
+1. A real switch device-template-profile attached underneath it
+   (`push.py`'s `attach_switch_templates_v0`).
+2. The policy object's own `type` field set to
+   `NETWORK_ACCESS_AND_SWITCHING` rather than plain `WIRELESS_ACCESS` —
+   the real UI's policy wizard has an explicit "Policy Type" checkbox
+   pair (Wireless / Switching-Routing) that reads straight from this
+   field.
+3. The VLANs themselves attached to the policy's own Switching/Routing >
+   VLAN Attribute table (`attach_vlan_attributes_v0`) — a genuinely
+   separate step from either of the above, and from the VLAN Profile's
+   own classification (`enable_classification`/`classified_entries`,
+   which only makes a VLAN *classification-aware*, not attached to any
+   particular policy's switching config).
 
 `BB-Retail-POS` (the payment-terminal SSID) uses PPSK (Private PSK) so
 every retail store can share one SSID definition with a distinct
@@ -100,20 +175,14 @@ passphrase per store, rather than needing a separate SSID per site.
 
 ## Known limitations
 
-- **Sites, Buildings, and Floors** can't be created as their own object
-  types through the current API — creation silently produces a generic
-  location folder instead, regardless of which type is requested.
-  `push.py` skips creating all three rather than create the wrong kind of
-  object. This matters more than it first looks: a device can only be
-  claimed into a Building or Floor, never a bare Site, so this blocks the
-  entire "deploy real hardware" story until resolved.
 - **Cloud Config Groups** require at least one real (already-claimed)
   device to create — none exist in this lab since there's no real
   hardware. Not load-bearing for anything else here since Classification
   Rules key off Site Group instead.
-- **Switch/wired templates** have no confirmed API path yet — the
-  `switch_templates` section of `device_templates.yaml` is local-only
-  planning data with no push path.
+- **Switch/wired templates**: only `SWE-5320-Default` and
+  `SWE-5320-Retail-Stack1` are real and pushed (see "Switch Templates"
+  above) — the rest of the `switch_templates` section is still
+  local-only planning data with no push path yet.
 - **`PPSK` and `DOT1X` SSID modes** need additional object types
   (`user_group_ids` for PPSK, a RADIUS server group or `enable_idm` for
   DOT1X) that aren't modeled yet — those SSIDs get created but left
@@ -136,12 +205,11 @@ passphrase per store, rather than needing a separate SSID per site.
 
 **New SSID**: add an entry under `network_policies.yaml`'s `ssids:` list
 and run `push.py` — it creates it, configures it, and attaches it to
-`BB-NP-Wireless` in one pass for `OPEN`/`PSK` modes.
+`BB-NP-Lab` in one pass for `OPEN`/`PSK` modes.
 
 **New store**: add one entry to `config/locations.yaml`'s `sites` list
-(see the commented-out example at the bottom of that file). Everything
-else picks it up; the site object itself won't create until Site creation
-is supported (see Known Limitations).
+(see the commented-out example at the bottom of that file) and run
+`push.py` — it creates the Site plus its Building and Floor in one pass.
 
 ## Secrets
 

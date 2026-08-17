@@ -1,0 +1,32 @@
+# RADIUS Servers (/radius-servers/external) — real, documented v1
+# endpoint, confirmed from .docs/api-1.json's real
+# XiqCreateExternalRadiusServerRequest schema (no capture needed for this
+# one — it's fully documented, unlike most of the wired/switch work in
+# this repo).
+#
+# BB-RADIUS-Pretend is a deliberately fake/placeholder server, at the
+# user's explicit direction ("just use a pretend radius server") —
+# this lab has no real RADIUS infrastructure, and the goal is just to
+# unblock DOT1X SSID configuration end-to-end (BB-Corp-Staff,
+# BB-Retail-Staff in network_policies.yaml), not to model a real auth
+# backend. ip_addr/shared_secret are placeholder values that will never
+# actually authenticate a real client.
+#
+# There is no separate "RADIUS server group" object/CRUD endpoint
+# anywhere in the real API — confirmed by searching api-1.json — so
+# XiqSetSsidModeDot1xRequest's `radius_server_group_id` field just takes
+# a plain RADIUS server id directly; "group" is a naming artifact, not a
+# real wrapper object this repo needs to create.
+radius_servers:
+  - name: BB-RADIUS-Pretend
+    comment: >
+      Fake/placeholder RADIUS server — exists only to satisfy DOT1X
+      SSIDs' required radius_server_group_id, not a real auth backend.
+    server_type: BOTH
+    access_type: STANDARD
+    ip_addr: "10.255.255.1"
+    shared_secret: "pretend-shared-secret-not-real"
+    authentication_port: 1812
+    accounting_port: 1813
+    enable_a3: false
+    enable_peer_discovery: false

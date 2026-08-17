@@ -38,16 +38,19 @@
 # minimum needed for a device to have somewhere real to attach. No site
 # below overrides the default; the field only exists for when one needs to.
 #
-# STILL BLOCKED, confirmed live 2026-08-16: the same `type`-field-ignored
-# bug that blocks true Site creation also blocks Building and Floor —
-# tested directly (a disposable POST /locations with type: "BUILDING"
-# came back type: "Site Group", identical to the SITE case). So the whole
-# chain (Site, Building, Floor) needs the same fix, whatever it turns out
-# to be — most likely found the same way everything else got solved:
-# create one real Site+Building+Floor by hand in the Platform ONE UI with
-# devtools open, capture the real request, reproduce it here. Not done
-# yet — SITE_TYPE_CREATE_CONFIRMED stays False in push.py and none of
-# this section is pushed until that happens.
+# RESOLVED 2026-08-16. The `type`-field-ignored bug on the generic
+# /locations endpoint was real but turned out to be beside the point: SITE/
+# BUILDING/FLOOR were never reachable through that endpoint at all — they
+# have their own typed collection paths (POST/GET /locations/site,
+# /locations/building, /locations/floor, singular), confirmed from two
+# already-working reference scripts the user supplied
+# (.docs/xiq_sites.py, .docs/xiq_add_buildings_and_floors.py — real
+# production automation predating this lab). All 10 sites below now exist
+# live as true SITE nodes, each with one real Building ("Main") and one
+# real Floor ("1") under it, confirmed via a fresh GET after push (not
+# just the write response) — see push.py's upsert_typed_location and
+# ENGINEERING-NOTES.md for the full story, including the address-parsing
+# and duplicate-folder-name snags hit along the way.
 
 # Applied to every site unless overridden per-site with building:/floor:.
 default_building_name: "Main"
@@ -63,7 +66,7 @@ site_groups:
 # site_defaults: per-group fallback values, same convenience pattern as the
 # Mist repo — a site only states what's actually specific to it.
 #
-# network_policy is the same BB-NP-Wireless everywhere now — collapsed to
+# network_policy is the same BB-NP-Lab everywhere now — collapsed to
 # one org-wide policy on 2026-08-15 (see network_policies.yaml header for
 # why). Only device_template_ap (and, through it, the radio profile) still
 # varies per format — that's still real, unaffected by the policy collapse.
@@ -71,23 +74,23 @@ site_defaults:
   BB-SG-DistributionCenters:
     country_code: US
     device_template_ap: BB-DT-DistributionCenter-AP
-    network_policy: BB-NP-Wireless
+    network_policy: BB-NP-Lab
   BB-SG-CorporateOffices:
     country_code: US
     device_template_ap: BB-DT-CorporateOffice-AP
-    network_policy: BB-NP-Wireless
+    network_policy: BB-NP-Lab
   BB-SG-RetailStandalone:
     country_code: US
     device_template_ap: BB-DT-RetailStandalone-AP
-    network_policy: BB-NP-Wireless
+    network_policy: BB-NP-Lab
   BB-SG-RetailMall:
     country_code: US
     device_template_ap: BB-DT-RetailMall-AP
-    network_policy: BB-NP-Wireless
+    network_policy: BB-NP-Lab
   BB-SG-PopUpStores:
     country_code: US
     device_template_ap: BB-DT-PopUp-AP
-    network_policy: BB-NP-Wireless
+    network_policy: BB-NP-Lab
 
 sites:
 

@@ -29,28 +29,58 @@
 # Extreme (id 40000 = VLAN 1 "default", id 36000 = "default-profile") —
 # upsert-by-name leaves those alone; only the BB-VP-*/BB-UP-* entries below
 # are ours.
+#
+# classification_rules: [<name>, ...] — CONFIRMED REAL 2026-08-16, at the
+# user's correction: VLANs get applied to switching via classification on
+# the VLAN Profile object ITSELF (Switching/Routing > Switch Settings >
+# VLAN Attribute, or directly editing the VLAN — the user's screenshot of
+# a real BB-VP-Corp-Guest object showed "Apply VLANs to devices using
+# classification" plus a Classification Rules table right on the VLAN),
+# not the AP-template/SSID-style "attach to policy" pattern this repo
+# used everywhere else. The real v1 field shape (`XiqCreateVlanProfileRequest`
+# in .docs/api-1.json) is a clean, documented, flat schema —
+# `enable_classification: true` plus `classified_entries: [{
+# classification_rule_id, vlan_id}, ...]` — a bare id/number pair, not a
+# full nested object like everything else in this session. Each name
+# below must match a `name:` in classification_rules.yaml. Retail's two
+# VLANs used by both formats list both rules, same convention as SSIDs
+# sharing a rule list. Applied by push.py in a LATE step (after
+# classification_rules exist) via PATCH, since VLAN profiles are created
+# early (step 1, before classification rules exist in step 5b) with
+# enable_classification/classified_entries left at their safe create-time
+# defaults (false/[]) and only really set once the rule ids are real.
 
 vlan_profiles:
   - name: BB-VP-DC-Ops
     default_vlan_id: 20
+    classification_rules: [BB-Rule-DistributionCenter]
   - name: BB-VP-DC-IoT
     default_vlan_id: 25
+    classification_rules: [BB-Rule-DistributionCenter]
   - name: BB-VP-Corp-Staff
     default_vlan_id: 10
+    classification_rules: [BB-Rule-CorporateOffice]
   - name: BB-VP-Corp-Guest
     default_vlan_id: 15
+    classification_rules: [BB-Rule-CorporateOffice]
   - name: BB-VP-Corp-IoT
     default_vlan_id: 18
+    classification_rules: [BB-Rule-CorporateOffice]
   - name: BB-VP-Retail-Staff
     default_vlan_id: 32
+    classification_rules: [BB-Rule-Retail, BB-Rule-RetailMall]
   - name: BB-VP-Retail-Guest
     default_vlan_id: 35
+    classification_rules: [BB-Rule-Retail, BB-Rule-RetailMall]
   - name: BB-VP-Retail-POS
     default_vlan_id: 30
+    classification_rules: [BB-Rule-Retail, BB-Rule-RetailMall]
   - name: BB-VP-PopUp-Staff
     default_vlan_id: 40
+    classification_rules: [BB-Rule-PopUp]
   - name: BB-VP-PopUp-Guest
     default_vlan_id: 45
+    classification_rules: [BB-Rule-PopUp]
 
 # One User Profile per VLAN Profile, 1:1 — nothing in this lab needs
 # per-attribute/RADIUS-returned user-profile logic (a real feature, out of

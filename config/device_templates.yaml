@@ -138,61 +138,556 @@ device_templates:
       max_transmit_power: { "24": 17, "5": 17, "6": 17 }
       classification_rule: BB-Rule-PopUp
 
-  # SWITCH TEMPLATES: still fully speculative — no endpoint found or
-  # captured this session (unlike AP templates above). Content unchanged
-  # from the original pre-verification draft; don't trust the field names,
-  # only the port-role reasoning. Real next step is identical to how AP
-  # templates got solved: capture a real browser request while creating
-  # one in the actual UI.
+  # SWITCH TEMPLATES.
+  #
+  # SWE-5320-Retail-Stack1 is REAL and pushed — the user captured a real
+  # "create switch device template" request (.docs/sw-template.json,
+  # SwitchEngine_5320_16P_4XE). First design attempt was an Instant Port
+  # Profile applied to every port (LLDP-based auto-detection of the
+  # firewall uplink) — abandoned after live testing isolated a real
+  # blocker: that object type can be REFERENCED by id in this endpoint,
+  # but not ORIGINATED with a self-chosen one (see push.py module header
+  # for the full A/B-tested story). Replaced at the user's direction
+  # (2026-08-16) with a static per-port layout instead, closer to the
+  # Mist lab's own style — see `port_plan:` below and push.py's
+  # build_switch_template_body_v0/upsert_switch_template_v0. Every other
+  # template in this section (Stack2/3, Core, IDF) is still planning
+  # data, gated off — "we'll do the others later" per the user. Real next
+  # step for those is identical to how this one got solved: capture one
+  # more real request while building each in the UI.
+  #
+  # Hardware: Switch Engine 5320-16P-4XE — confirmed live from the capture:
+  # 16 PoE access ports (0-15, ETH) + 4 XE (10/25GbE) ports (16-19, SFP),
+  # 0-indexed flat numbering with no per-unit prefix (at least for a
+  # single-unit template — untested for stack2/3, see push.py). Real
+  # product_type string is `SwitchEngine_5320_16P_4XE` — the earlier
+  # `SwitchEngine_5320_16P_4XE` guess (matching the `AP_5010` naming pattern) was
+  # wrong; fixed below now that we have a real value.
+  #
+  # STACK-SIZE-INDEXED, at the user's explicit direction: Extreme needs a
+  # separate template per number of stacked units, not one template per
+  # format/role, because a stack's XE ports aren't all free for
+  # uplink/trunk use — some get consumed by the inter-unit stacking links
+  # themselves, and how many depends on a unit's position in the stack
+  # (SummitStack-V-style daisy chain: an end unit uses 1 XE port for its
+  # one neighbor, a middle unit in a 3-stack uses 2 for its two
+  # neighbors). That's a real hardware constraint, not just a naming
+  # convenience — a stack3 template genuinely needs a different port plan
+  # per unit than a stack1 or stack2 template, which is why each `units:`
+  # list below varies rather than just repeating.
+  #
+  # ROLES:
+  # - Retail (`access`): 1-3 units per store, scoped up to stack3 per the
+  #   user's direction — a store is expected to need at most a third unit.
+  #   Shared across RetailStandalone AND RetailMall (same port needs
+  #   either way — the RF power difference that splits those two formats'
+  #   AP templates doesn't apply to switch port roles).
+  # - Core (`core`): an MC-LAG pair, NOT a hardware stack — core1/core2
+  #   are two independent standalone switches (stack_size always 1 each)
+  #   linked by an inter-switch-control link, so there's exactly one Core
+  #   template per format, applied to both members. Separate per format
+  #   (DistributionCenter vs CorporateOffice) since their downstream VLANs
+  #   differ.
+  # - IDF (`idf`): access closets, modeled the same variable-stack way as
+  #   Retail per the user's direction (1-3 units), separate per format for
+  #   the same VLAN reason as Core.
+  #
+  # OPEN GAP, same shape as Cloud Config Groups needing a real device id:
+  # a Classification Rule only resolves to Site Group granularity, so it
+  # can pick one *default* template for a whole DC/Corp site but can't
+  # tell a Core switch from an IDF switch within that same site — Core
+  # has to be assigned directly to its two device ids at claim time,
+  # overriding the classification default. Not modeled in push.py yet
+  # since it needs real claimed devices to test against, same reason
+  # Cloud Config Groups are stuck.
   switch_templates:
-    - name: BB-DT-Retail-Switch
+    - name: SWE-5320-Default
       comment: >
-        Single Virtual Chassis-equivalent stack (1-3 switches), flat port
-        map, no core/IDF split.
-      port_usages:
-        pos:    { mode: access, native_vlan: wired_pos,   ports: "1-4" }
-        staff:  { mode: access, native_vlan: wired_staff, ports: "5-8" }
-        iot:    { mode: access, native_vlan: wired_iot,   ports: "9-10" }
-        ap:
-          mode: trunk
-          native_vlan: wired_mgmt
-          tagged_vlans: [wifi_retail_pos, wifi_retail_staff, wifi_retail_guest]
-          ports: "11-22"
-        uplink: { mode: trunk, all_vlans: true, ports: "23-24" }
+        Fallback default for the whole SwitchEngine_5320_16P_4XE product
+        type on BB-NP-Lab — no classification_rules, at the user's
+        direction ("need a 5320-16P default and then the retail one with
+        a classification rule"). Every port is plain Access Port on the
+        global default VLAN — the safest baseline for any 5320-16P switch
+        that doesn't match a more specific format's rule yet, not tied to
+        a particular site format the way the Stack/Core/IDF templates
+        are.
+      product_type: SwitchEngine_5320_16P_4XE
+      role: default
+      stack_size: 1
+      port_plan:
+        - role: access
+          ports: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+        - role: access
+          ports: [16, 17, 18, 19]
 
-    - name: BB-DT-DistributionCenter-Switch-Core
-      comment: "Core-of-2 pair (EVPN-Multihoming-equivalent). Assign to a site's core switches."
-      port_usages:
-        core_peer:     { mode: trunk, all_vlans: true, ports: "1" }
-        core_downlink: { mode: trunk, all_vlans: true, ports: "2-3" }
+    - name: SWE-5320-Retail-Stack1
+      comment: >
+        Single standalone unit — smallest stores. Static per-port layout
+        (not dynamic/LLDP — see header) at the user's direction: physical
+        ports 1-4 are AP trunks, physical port 16 is the firewall uplink.
+        CORRECTED 2026-08-16: `ports:` below are the API's 0-INDEXED
+        values, NOT the 1-indexed physical/UI port labels — physical
+        port 16 is API index 15, not 16 (confirmed two ways: the real
+        captured trunk.json reference's own "Uplink" custom trunk port
+        sits at API index 15 with interfaceType ETH, and the user caught
+        a live UI screenshot showing the uplink trunk landing on
+        UI-labeled port 17 instead of 16 before this fix). The whole
+        5320-16P-4XE is 16 ETH/PoE ports (API 0-15, UI labels 1-16) + 4
+        XE/SFP ports (API 16-19, UI labels 17-20) — physical port 16 is
+        the LAST ETH port, not an SFP one. `trunk` ports use Extreme's
+        shared predefined Trunk Port object UNMODIFIED (confirmed live
+        2026-08-16 — customizing it in any way, including which VLANs
+        are tagged, 400's every time; see push.py's
+        load_trunk_port_reference for the full story) — that default
+        already trunks every VLAN, which satisfies "carry the wifi VLANs
+        to the AP" just less precisely scoped than the 30/32/35-only
+        intent. Ports without a real BB-VP-* VLAN below sit on the global
+        default VLAN — tagging a plain access port to a specific VLAN
+        needs a v0 user-profile/vlan-profile shape that isn't confirmed
+        yet either.
 
-    - name: BB-DT-DistributionCenter-Switch-IDF
-      comment: "Access closet, dual-homed uplinks to both core members."
-      port_usages:
-        idf_uplink: { mode: trunk, all_vlans: true, ports: "1-2" }
-        ops:        { mode: access, native_vlan: wired_ops, ports: "3-10" }
-        iot:        { mode: access, native_vlan: wired_iot, ports: "11-14" }
-        ap:
-          mode: trunk
-          native_vlan: wired_mgmt
-          tagged_vlans: [wifi_dc_ops, wifi_dc_iot]
-          ports: "15-22"
+        BROKEN IN PRACTICE, confirmed live 2026-08-16 on
+        BB-Retail-Columbus-0210: `allowedVlans: "all"` did NOT result in
+        any real per-VLAN tagged-port membership on the physical switch —
+        `show fdb vlan BB-VP-Retail-Guest` came back empty on every port,
+        not just 1-4/16, and `show configuration` had zero
+        `configure vlan <name> add ports <N> tagged` lines for ANY VLAN
+        on the whole device. Fixed only by hand:
+        `configure vlan BB-VP-Retail-Guest add ports 1-4,16 tagged`. The
+        VLANs themselves DO get created on the device with zero port
+        members — that part is separate and working as designed, driven
+        by attach_vlan_attributes_v0's `alwaysCreate: true`
+        (push.py:421-469, confirmed from .docs/vlan-add.json) — it's
+        specifically the trunk port -> VLAN membership link that's
+        missing. Leading theory, NOT yet confirmed: attach_switch_
+        templates_v0's _inject_vlan_attributes_v0 (push.py:887-909) only
+        populates vlanAttrSettings.vlanAttributesEntries on the policy's
+        one ruleless SWE-5320-Default (embedding it on a classifiedEntry's
+        own deviceTemplate — i.e. every rule-gated template including
+        this one — 500's, confirmed by direct testing), so every
+        classification-gated switch template in this repo ships with an
+        empty VLAN-attribute list; a trunk port's "all" may need that
+        per-template list populated before the platform will actually
+        push real tagged membership.
 
-    - name: BB-DT-CorporateOffice-Switch-Core
-      comment: "Same Core-of-2 shape as the DC template, office VLANs."
-      port_usages:
-        core_peer:     { mode: trunk, all_vlans: true, ports: "1" }
-        core_downlink: { mode: trunk, all_vlans: true, ports: "2-3" }
+        THEORY TESTED AND KILLED, 2026-08-16. Read-only check first: both
+        SWE-5320-Default AND SWE-5320-Retail-Stack1's own device-template
+        objects (GET /config/device/templates/{id}) had
+        `vlanAttrSettings.vlanAttributesEntryIds: []` — EMPTY on both, not
+        just the rule-gated one. The "defaultDeviceTemplate has all 10
+        real entries" description in push.py's
+        _inject_vlan_attributes_v0 only ever describes the transient
+        payload built in memory at policy-attach time — it's never
+        actually persisted back onto the template object itself, for
+        either template. So the default-vs-classified asymmetry isn't
+        the differentiator at all. Then tried a direct write: PUT
+        /config/device/templates/{SWE-5320-Retail-Stack1 id} with
+        vlanAttrSettings.vlanAttributesEntries populated with the real
+        policy-level list — returned 200 "success" (unlike embedding the
+        same data in a classifiedEntry via the policy-attach endpoint,
+        which 500's), BUT a fresh GET immediately after showed
+        vlanAttrSettings completely unchanged (same nested id/createdAt/
+        updatedAt as before, still empty entryIds) even though the
+        template's own top-level `updatedAt` DID bump — i.e. the PUT was
+        accepted and saved something, but silently dropped this specific
+        field. Exactly the "an API accepting a payload isn't proof it
+        worked" trap this repo's own HANDOFF notes warn about (see
+        device_templates.yaml's AP-template section header). Conclusion:
+        vlanAttrSettings.vlanAttributesEntries does not appear to be
+        independently writable via ANY endpoint tried so far (custom
+        trunk-port 400's, classifiedEntry-embed 500's, direct
+        template-PUT silently no-ops) — three different approaches, three
+        different failure modes, no working path found blind. NEXT REAL
+        STEP, matching how every other mechanism in this repo actually
+        got solved: capture a genuine working request from the Platform
+        ONE UI itself while manually tagging a trunk port's VLANs on a
+        real device or template, the same devtools-capture technique
+        used for SSID creation/classification/AP templates/VLAN
+        Attributes — not another blind guess against the live tenant.
+        Until that capture happens, treat every store on this template as
+        needing the same manual `add ports ... tagged` CLI fix
+        post-provisioning (see notes.txt issue2).
 
-    - name: BB-DT-CorporateOffice-Switch-IDF
-      comment: "Access closet, dual-homed uplinks to both core members."
-      port_usages:
-        idf_uplink: { mode: trunk, all_vlans: true, ports: "1-2" }
-        staff:      { mode: access, native_vlan: wired_staff, ports: "3-14" }
-        guest:      { mode: access, native_vlan: wired_guest, ports: "15-18" }
-        iot:        { mode: access, native_vlan: wired_iot, ports: "19-20" }
-        ap:
-          mode: trunk
-          native_vlan: wired_mgmt
-          tagged_vlans: [wifi_corp_staff, wifi_corp_guest, wifi_corp_iot]
-          ports: "21-24"
+        ROOT CAUSE FOUND, 2026-08-16, from the real "Create Port Type" UI
+        dialog's own tooltip (screenshot the user captured): "all" only
+        auto-tags VLAN IDs that are "also defined in other port types
+        assigned to the switch" — it does NOT mean "every VLAN that
+        exists on the device." Since no access port in this template was
+        ever assigned a real BB-VP-Retail-* VLAN (all sat on the plain
+        default Access Port, VLAN 1), the trunk ports had zero donor
+        ports to inherit from — that's the actual, complete explanation
+        for the empty-FDB bug, no platform bug required. Attempted the
+        fix (build_switch_template_body_v0's new `vlan:` support on an
+        access port_plan group, push.py's _port_type_access/
+        _build_user_profile_obj_v0) against BB-VP-Retail-Staff on ports
+        4-5 (physical 5-6) 2026-08-16 — TWO more confirmed-live failures
+        before backing off:
+          1. Deep-copying the real predefined Access Port (id 1105,
+             predefined: true) and swapping only vlan/defaultUserProfile,
+             id left at 1105 -> PUT 200 "success", but a fresh GET
+             afterward showed portTypeId still 1105 and nothing changed —
+             same silent-relink-by-id trap as vlanAttrSettings above, the
+             backend just re-pointed at the existing predefined object
+             and discarded the embedded edits.
+          2. Stripping id/predefined entirely (submitting it as a fresh
+             object, no id) -> clean 400 core.service.missing.id, "The ID
+             of portType is missing."
+        Conclusion from #2: a Port Type is its own first-class object
+        with its own real id, created through its OWN endpoint — exactly
+        what that "Create Port Type" dialog is — and only ever
+        REFERENCED by id inside a switch template's portSettingsEntries,
+        the same pattern VLAN Profile/User Profile already use elsewhere
+        in this repo. It is NOT something a switch-template payload can
+        originate inline, for Access Port any more than for Trunk Port.
+        Real next step: create a genuinely custom Access Port (e.g.
+        native VLAN = a real BB-VP-Retail-* tag) through that actual UI
+        dialog and capture the POST — same devtools-capture technique as
+        everything else here, not another blind guess. The `vlan:` field
+        on an access port_plan group's YAML/code support is written and
+        ready (see build_switch_template_body_v0) but UNUSED below until
+        that real Port Type creation endpoint is found, since exercising
+        it today just 400's the whole push.
+      product_type: SwitchEngine_5320_16P_4XE
+      role: access
+      stack_size: 1
+      classification_rules: [BB-Rule-Retail, BB-Rule-RetailMall]
+      port_plan:
+        - role: trunk
+          ports: [0, 1, 2, 3]
+          port_type_name: "Retail AP"
+          trunk_vlans: [BB-VP-Retail-POS, BB-VP-Retail-Staff, BB-VP-Retail-Guest]
+          comment: >
+            AP ports (physical 1-4). CONFIRMED LIVE 2026-08-16
+            (.docs/add-port-trunk.json, POST /config/port/trunkports/,
+            push.py's upsert_trunk_port_type_v0): explicit VLAN list
+            (30,32,35) via a real custom "Retail AP" Port Type, instead
+            of the shared predefined Trunk Port's "all" — same fix
+            proven for BB-VP-Retail-Staff via ports 5-6 below, now
+            applied properly (explicit list, not implicit "all"
+            inheritance) rather than depending on some other port
+            happening to carry the right VLAN.
+        - role: trunk
+          ports: [15]
+          comment: >
+            Firewall uplink — physical port 16 (API index 15, the LAST
+            ETH port, not an SFP one — see header). Uses the same
+            `trunk` role as the AP ports, not a separate Uplink type —
+            at the user's direction ("forget about uplink, its the
+            same"). Tried giving this its own named "Retail Trunk" Port
+            Type with `trunk_vlans: all` (confirmed live it works fine —
+            see push.py's upsert_trunk_port_type_v0, which still supports
+            the literal "all" value for any group that wants a genuinely
+            named "carry everything" trunk) — reverted at the user's
+            call 2026-08-16: pointless duplication when the shared
+            predefined Trunk Port (id 1107, see
+            load_trunk_port_reference) already does exactly this with no
+            separate object to maintain.
+        - role: access
+          ports: [4, 5]
+          vlan: BB-VP-Retail-Staff
+          comment: >
+            Staff wired terminals — physical ports 5-6 (API 4-5). Real
+            Port Type object (.docs/add-port-type.json, POST
+            /config/port/accessports/, see push.py's
+            upsert_access_port_type_v0) creates/reuses
+            "BB-PT-Retail-Staff" and embeds it directly, no more inline
+            customization of the shared predefined Access Port —
+            CONFIRMED LIVE END-TO-END 2026-08-16 on
+            BB-Retail-Columbus-0210's own `show configuration`:
+            `configure vlan BB-VP-Retail-Staff add ports 5-6 untagged`.
+            This is also what first proved the AP trunk ports' "all"
+            root cause (see header) — now that the AP trunk group above
+            uses an explicit VLAN list instead of "all", this port no
+            longer needs to double as a donor; it's just genuinely
+            needed for wired Staff terminals in their own right.
+        - role: access
+          ports: [6, 7, 8, 9, 10, 11, 12, 13, 14]
+          comment: >
+            Spare (ETH), on the default VLAN — a POS wired port would
+            follow the same BB-PT-Retail-POS pattern as Staff above if a
+            store ever needs a wired POS terminal here.
+        - role: access
+          ports: [16, 17, 18, 19]
+          comment: Spare (SFP/XE) — kept a separate group from the ETH spares above, matching the captured reference's own convention of never mixing interfaceType within one port group.
+
+    - name: SWE-5320-Retail-Stack2
+      comment: >
+        Two units, one stacking link between them (XE1 on each side) —
+        3 of 4 XE ports stay free per unit. Uplink lives on unit 1 only.
+      product_type: SwitchEngine_5320_16P_4XE
+      role: access
+      stack_size: 2
+      classification_rules: [BB-Rule-Retail, BB-Rule-RetailMall]
+      units:
+        - unit: 1
+          stacking_links_used: 1
+          port_usages:
+            pos:    { mode: access, native_vlan: wired_pos,   ports: "1-4" }
+            staff:  { mode: access, native_vlan: wired_staff, ports: "5-8" }
+            iot:    { mode: access, native_vlan: wired_iot,   ports: "9-12" }
+            ap:
+              mode: trunk
+              native_vlan: wired_mgmt
+              tagged_vlans: [wifi_retail_pos, wifi_retail_staff, wifi_retail_guest]
+              ports: "13-16"
+            stack_link: { ports: "XE1" }
+            uplink: { mode: trunk, all_vlans: true, ports: "XE2-XE3" }
+        - unit: 2
+          stacking_links_used: 1
+          port_usages:
+            pos:    { mode: access, native_vlan: wired_pos,   ports: "1-4" }
+            staff:  { mode: access, native_vlan: wired_staff, ports: "5-8" }
+            iot:    { mode: access, native_vlan: wired_iot,   ports: "9-12" }
+            ap:
+              mode: trunk
+              native_vlan: wired_mgmt
+              tagged_vlans: [wifi_retail_pos, wifi_retail_staff, wifi_retail_guest]
+              ports: "13-16"
+            stack_link: { ports: "XE1" }
+
+    - name: SWE-5320-Retail-Stack3
+      comment: >
+        Three units, daisy-chained 1-2-3 — the middle unit spends 2 of its
+        4 XE ports on stacking links (one to each neighbor), leaving it
+        only 2 free; the end units keep 3 free each. This is the concrete
+        case that makes stack-indexed templates necessary rather than
+        optional — a flat "stack template" can't express unit 2's lower
+        free-port count.
+      product_type: SwitchEngine_5320_16P_4XE
+      role: access
+      stack_size: 3
+      classification_rules: [BB-Rule-Retail, BB-Rule-RetailMall]
+      units:
+        - unit: 1
+          stacking_links_used: 1
+          port_usages:
+            pos:    { mode: access, native_vlan: wired_pos,   ports: "1-4" }
+            staff:  { mode: access, native_vlan: wired_staff, ports: "5-8" }
+            iot:    { mode: access, native_vlan: wired_iot,   ports: "9-12" }
+            ap:
+              mode: trunk
+              native_vlan: wired_mgmt
+              tagged_vlans: [wifi_retail_pos, wifi_retail_staff, wifi_retail_guest]
+              ports: "13-16"
+            stack_link: { ports: "XE1", note: "link to unit 2" }
+            uplink: { mode: trunk, all_vlans: true, ports: "XE2-XE3" }
+        - unit: 2
+          stacking_links_used: 2
+          port_usages:
+            pos:    { mode: access, native_vlan: wired_pos,   ports: "1-4" }
+            staff:  { mode: access, native_vlan: wired_staff, ports: "5-8" }
+            iot:    { mode: access, native_vlan: wired_iot,   ports: "9-12" }
+            ap:
+              mode: trunk
+              native_vlan: wired_mgmt
+              tagged_vlans: [wifi_retail_pos, wifi_retail_staff, wifi_retail_guest]
+              ports: "13-16"
+            stack_link: { ports: "XE1-XE2", note: "XE1 to unit 1, XE2 to unit 3" }
+        - unit: 3
+          stacking_links_used: 1
+          port_usages:
+            pos:    { mode: access, native_vlan: wired_pos,   ports: "1-4" }
+            staff:  { mode: access, native_vlan: wired_staff, ports: "5-8" }
+            iot:    { mode: access, native_vlan: wired_iot,   ports: "9-12" }
+            ap:
+              mode: trunk
+              native_vlan: wired_mgmt
+              tagged_vlans: [wifi_retail_pos, wifi_retail_staff, wifi_retail_guest]
+              ports: "13-16"
+            stack_link: { ports: "XE1", note: "link to unit 2" }
+
+    - name: SWE-5320-DistributionCenter-Core
+      comment: >
+        MC-LAG pair, NOT a stack — apply this same template to both
+        core1 and core2 (two independent claimed devices), not a 2-unit
+        stack. XE1 is the inter-switch control link between the pair;
+        the PoE ports go unused on a pure core role.
+      product_type: SwitchEngine_5320_16P_4XE
+      role: core
+      stack_size: 1
+      classification_rule: BB-Rule-DistributionCenter
+      units:
+        - unit: 1
+          stacking_links_used: 0
+          port_usages:
+            core_peer:     { mode: trunk, all_vlans: true, ports: "XE1" }
+            core_uplink:   { mode: trunk, all_vlans: true, ports: "XE2" }
+            core_downlink: { mode: trunk, all_vlans: true, ports: "XE3-XE4" }
+
+    - name: SWE-5320-DistributionCenter-IDF-Stack1
+      comment: Single-unit access closet, dual-homed to both core members.
+      product_type: SwitchEngine_5320_16P_4XE
+      role: idf
+      stack_size: 1
+      classification_rule: BB-Rule-DistributionCenter
+      units:
+        - unit: 1
+          stacking_links_used: 0
+          port_usages:
+            idf_uplink: { mode: trunk, all_vlans: true, ports: "XE1-XE2", note: "one to each core member" }
+            ops:        { mode: access, native_vlan: wired_ops, ports: "1-10" }
+            iot:        { mode: access, native_vlan: wired_iot, ports: "11-14" }
+            ap:
+              mode: trunk
+              native_vlan: wired_mgmt
+              tagged_vlans: [wifi_dc_ops, wifi_dc_iot]
+              ports: "15-16"
+
+    - name: SWE-5320-DistributionCenter-IDF-Stack2
+      comment: Two-unit access closet, dual-homed uplink from unit 1 only.
+      product_type: SwitchEngine_5320_16P_4XE
+      role: idf
+      stack_size: 2
+      classification_rule: BB-Rule-DistributionCenter
+      units:
+        - unit: 1
+          stacking_links_used: 1
+          port_usages:
+            idf_uplink: { mode: trunk, all_vlans: true, ports: "XE2-XE3", note: "one to each core member" }
+            stack_link: { ports: "XE1" }
+            ops:        { mode: access, native_vlan: wired_ops, ports: "1-10" }
+            iot:        { mode: access, native_vlan: wired_iot, ports: "11-14" }
+            ap:
+              mode: trunk
+              native_vlan: wired_mgmt
+              tagged_vlans: [wifi_dc_ops, wifi_dc_iot]
+              ports: "15-16"
+        - unit: 2
+          stacking_links_used: 1
+          port_usages:
+            stack_link: { ports: "XE1" }
+            ops:        { mode: access, native_vlan: wired_ops, ports: "1-12" }
+            iot:        { mode: access, native_vlan: wired_iot, ports: "13-16" }
+
+    - name: SWE-5320-DistributionCenter-IDF-Stack3
+      comment: >
+        Three-unit access closet, daisy-chained 1-2-3 — same middle-unit
+        stacking-link cost as Retail's stack3.
+      product_type: SwitchEngine_5320_16P_4XE
+      role: idf
+      stack_size: 3
+      classification_rule: BB-Rule-DistributionCenter
+      units:
+        - unit: 1
+          stacking_links_used: 1
+          port_usages:
+            idf_uplink: { mode: trunk, all_vlans: true, ports: "XE2-XE3", note: "one to each core member" }
+            stack_link: { ports: "XE1", note: "link to unit 2" }
+            ops:        { mode: access, native_vlan: wired_ops, ports: "1-10" }
+            iot:        { mode: access, native_vlan: wired_iot, ports: "11-14" }
+            ap:
+              mode: trunk
+              native_vlan: wired_mgmt
+              tagged_vlans: [wifi_dc_ops, wifi_dc_iot]
+              ports: "15-16"
+        - unit: 2
+          stacking_links_used: 2
+          port_usages:
+            stack_link: { ports: "XE1-XE2", note: "XE1 to unit 1, XE2 to unit 3" }
+            ops:        { mode: access, native_vlan: wired_ops, ports: "1-12" }
+            iot:        { mode: access, native_vlan: wired_iot, ports: "13-16" }
+        - unit: 3
+          stacking_links_used: 1
+          port_usages:
+            stack_link: { ports: "XE1", note: "link to unit 2" }
+            ops:        { mode: access, native_vlan: wired_ops, ports: "1-12" }
+            iot:        { mode: access, native_vlan: wired_iot, ports: "13-16" }
+
+    - name: SWE-5320-CorporateOffice-Core
+      comment: "Same MC-LAG-pair shape as the DC Core template, office VLANs."
+      product_type: SwitchEngine_5320_16P_4XE
+      role: core
+      stack_size: 1
+      classification_rule: BB-Rule-CorporateOffice
+      units:
+        - unit: 1
+          stacking_links_used: 0
+          port_usages:
+            core_peer:     { mode: trunk, all_vlans: true, ports: "XE1" }
+            core_uplink:   { mode: trunk, all_vlans: true, ports: "XE2" }
+            core_downlink: { mode: trunk, all_vlans: true, ports: "XE3-XE4" }
+
+    - name: SWE-5320-CorporateOffice-IDF-Stack1
+      comment: Single-unit access closet, dual-homed to both core members.
+      product_type: SwitchEngine_5320_16P_4XE
+      role: idf
+      stack_size: 1
+      classification_rule: BB-Rule-CorporateOffice
+      units:
+        - unit: 1
+          stacking_links_used: 0
+          port_usages:
+            idf_uplink: { mode: trunk, all_vlans: true, ports: "XE1-XE2", note: "one to each core member" }
+            staff:      { mode: access, native_vlan: wired_staff, ports: "1-10" }
+            guest:      { mode: access, native_vlan: wired_guest, ports: "11-13" }
+            iot:        { mode: access, native_vlan: wired_iot, ports: "14" }
+            ap:
+              mode: trunk
+              native_vlan: wired_mgmt
+              tagged_vlans: [wifi_corp_staff, wifi_corp_guest, wifi_corp_iot]
+              ports: "15-16"
+
+    - name: SWE-5320-CorporateOffice-IDF-Stack2
+      comment: Two-unit access closet, dual-homed uplink from unit 1 only.
+      product_type: SwitchEngine_5320_16P_4XE
+      role: idf
+      stack_size: 2
+      classification_rule: BB-Rule-CorporateOffice
+      units:
+        - unit: 1
+          stacking_links_used: 1
+          port_usages:
+            idf_uplink: { mode: trunk, all_vlans: true, ports: "XE2-XE3", note: "one to each core member" }
+            stack_link: { ports: "XE1" }
+            staff:      { mode: access, native_vlan: wired_staff, ports: "1-10" }
+            guest:      { mode: access, native_vlan: wired_guest, ports: "11-13" }
+            iot:        { mode: access, native_vlan: wired_iot, ports: "14" }
+            ap:
+              mode: trunk
+              native_vlan: wired_mgmt
+              tagged_vlans: [wifi_corp_staff, wifi_corp_guest, wifi_corp_iot]
+              ports: "15-16"
+        - unit: 2
+          stacking_links_used: 1
+          port_usages:
+            stack_link: { ports: "XE1" }
+            staff:      { mode: access, native_vlan: wired_staff, ports: "1-12" }
+            guest:      { mode: access, native_vlan: wired_guest, ports: "13-15" }
+            iot:        { mode: access, native_vlan: wired_iot, ports: "16" }
+
+    - name: SWE-5320-CorporateOffice-IDF-Stack3
+      comment: >
+        Three-unit access closet, daisy-chained 1-2-3 — same middle-unit
+        stacking-link cost as Retail's stack3.
+      product_type: SwitchEngine_5320_16P_4XE
+      role: idf
+      stack_size: 3
+      classification_rule: BB-Rule-CorporateOffice
+      units:
+        - unit: 1
+          stacking_links_used: 1
+          port_usages:
+            idf_uplink: { mode: trunk, all_vlans: true, ports: "XE2-XE3", note: "one to each core member" }
+            stack_link: { ports: "XE1", note: "link to unit 2" }
+            staff:      { mode: access, native_vlan: wired_staff, ports: "1-10" }
+            guest:      { mode: access, native_vlan: wired_guest, ports: "11-13" }
+            iot:        { mode: access, native_vlan: wired_iot, ports: "14" }
+            ap:
+              mode: trunk
+              native_vlan: wired_mgmt
+              tagged_vlans: [wifi_corp_staff, wifi_corp_guest, wifi_corp_iot]
+              ports: "15-16"
+        - unit: 2
+          stacking_links_used: 2
+          port_usages:
+            stack_link: { ports: "XE1-XE2", note: "XE1 to unit 1, XE2 to unit 3" }
+            staff:      { mode: access, native_vlan: wired_staff, ports: "1-12" }
+            guest:      { mode: access, native_vlan: wired_guest, ports: "13-15" }
+            iot:        { mode: access, native_vlan: wired_iot, ports: "16" }
+        - unit: 3
+          stacking_links_used: 1
+          port_usages:
+            stack_link: { ports: "XE1", note: "link to unit 2" }
+            staff:      { mode: access, native_vlan: wired_staff, ports: "1-12" }
+            guest:      { mode: access, native_vlan: wired_guest, ports: "13-15" }
+            iot:        { mode: access, native_vlan: wired_iot, ports: "16" }
